@@ -1,4 +1,6 @@
 import base64
+import asyncio
+import contextlib
 import io
 import logging
 import mimetypes
@@ -47,6 +49,7 @@ class CodexTaskRunner(TaskRunner):
         approval_policy: Optional[str] = None,
         sandbox_policy: Optional[str] = None,
         app_server_env: Optional[dict[str, str]] = None,
+        verbose: bool = False,
     ):
         self._model = model
 
@@ -84,6 +87,8 @@ class CodexTaskRunner(TaskRunner):
             adapter_kwargs["sandbox_policy"] = sandbox_policy
         if app_server_env is not None:
             adapter_kwargs["env"] = app_server_env
+        if verbose:
+            adapter_kwargs["verbose_rpc"] = True
 
         self._codex_backend = _CodexAppServerBackend(**adapter_kwargs)
         self._extra_rules = rules or []
@@ -218,8 +223,27 @@ class CodexTaskRunner(TaskRunner):
                     exc_info=ex,
                 )
 
+    async def run(
+        self,
+        *,
+        room,
+        arguments: dict,
+        attachment: Optional[bytes] = None,
+        caller=None,
+    ):
+        try:
+            return await super().run(
+                room=room,
+                arguments=arguments,
+                attachment=attachment,
+                caller=caller,
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self._codex_backend.close(), timeout=10)
+
     async def stop(self):
         try:
-            await self._codex_backend.close()
+            await asyncio.wait_for(self._codex_backend.close(), timeout=10)
         finally:
             await super().stop()

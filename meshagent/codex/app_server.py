@@ -146,6 +146,7 @@ class _CodexJsonRpcSession:
         mounts: Optional[ContainerMountSpec] = DEFAULT_CODEX_CONTAINER_MOUNTS,
         forward_stdout: bool = False,
         forward_stderr: bool = True,
+        verbose_rpc: bool = _env_bool("MESHAGENT_CODEX_VERBOSE_RPC", False),
         request_timeout_s: float = 300.0,
         server_request_handler: Optional[
             Callable[[str, dict], Awaitable[Optional[dict]]]
@@ -164,6 +165,7 @@ class _CodexJsonRpcSession:
         self._mounts = mounts
         self._forward_stdout = forward_stdout
         self._forward_stderr = forward_stderr
+        self._verbose_rpc = verbose_rpc
         self._request_timeout_s = request_timeout_s
         self._server_request_handler = server_request_handler
 
@@ -183,6 +185,41 @@ class _CodexJsonRpcSession:
         self._started = False
         self._start_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
+
+    def _redact_rpc_value(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            redacted: dict[str, Any] = {}
+            for key, nested in value.items():
+                normalized_key = key.lower().replace("-", "_")
+                if normalized_key in (
+                    "apikey",
+                    "api_key",
+                    "authorization",
+                    "token",
+                    "jwt",
+                    "bearer",
+                ):
+                    redacted[key] = "***"
+                    continue
+                redacted[key] = self._redact_rpc_value(nested)
+            return redacted
+
+        if isinstance(value, list):
+            return [self._redact_rpc_value(item) for item in value]
+
+        return value
+
+    def _log_rpc_message(self, *, direction: str, payload: Any) -> None:
+        if not self._verbose_rpc:
+            return
+
+        try:
+            redacted_payload = self._redact_rpc_value(payload)
+            text = json.dumps(redacted_payload, ensure_ascii=False, default=str)
+        except Exception:
+            text = str(payload)
+
+        logger.info("codex rpc %s %s", direction, text)
 
     def _mark_transport_failure(self, *, message: str) -> None:
         logger.error(message)
@@ -308,7 +345,7 @@ class _CodexJsonRpcSession:
                     )
 
                 try:
-                    logger.info(f"starting codex: {command_to_run}")
+                    logger.debug(f"starting codex: {command_to_run}")
                     self._container_exec = await self._room.containers.exec(
                         container_id=self._container_id,
                         command=["bash", "-lc", command_to_run],
@@ -321,6 +358,7 @@ class _CodexJsonRpcSession:
 
                 self._reader_task = asyncio.create_task(self._read_container_stdout())
                 self._stderr_task = asyncio.create_task(self._read_container_stderr())
+
             else:
                 if self._command is None:
                     raise CodexAppServerError("codex command was empty")
@@ -372,7 +410,7 @@ class _CodexJsonRpcSession:
                     login_api_key = token.strip()
 
             if login_api_key is not None:
-                logger.info("authenticating codex app-server via account/login/start")
+                logger.debug("authenticating codex app-server via account/login/start")
                 await self._request(
                     method="account/login/start",
                     params={
@@ -440,17 +478,20 @@ class _CodexJsonRpcSession:
 
         if self._container_exec is not None:
             with contextlib.suppress(Exception):
-                await self._container_exec.kill()
+                await asyncio.wait_for(self._container_exec.kill(), timeout=5)
             with contextlib.suppress(Exception):
-                await self._container_exec.result
+                await asyncio.wait_for(self._container_exec.result, timeout=5)
             self._container_exec = None
 
         if self._container_id is not None:
             if self._room is not None:
                 with contextlib.suppress(Exception):
-                    await self._room.containers.stop(
-                        container_id=self._container_id,
-                        force=True,
+                    await asyncio.wait_for(
+                        self._room.containers.stop(
+                            container_id=self._container_id,
+                            force=True,
+                        ),
+                        timeout=10,
                     )
             self._container_id = None
 
@@ -517,6 +558,8 @@ class _CodexJsonRpcSession:
         )
 
     async def _send_json(self, payload: dict) -> None:
+        self._log_rpc_message(direction="->", payload=payload)
+
         if self._websocket is not None:
             encoded = json.dumps(payload)
             async with self._write_lock:
@@ -526,7 +569,15 @@ class _CodexJsonRpcSession:
         if self._container_exec is not None:
             encoded = (json.dumps(payload) + "\n").encode("utf-8")
             async with self._write_lock:
-                await self._container_exec.write(encoded)
+                try:
+                    await asyncio.wait_for(
+                        self._container_exec.write(encoded),
+                        timeout=min(30.0, self._request_timeout_s),
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise CodexAppServerError(
+                        "timed out writing to codex app-server container stdin"
+                    ) from exc
             return
 
         if self._process is None or self._process.stdin is None:
@@ -542,6 +593,7 @@ class _CodexJsonRpcSession:
             message = json.loads(text)
         except Exception:
             logger.warning("unable to parse codex app-server line as json: %s", text)
+            self._log_rpc_message(direction="<- raw", payload=text)
             return
 
         await self._dispatch_message(message)
@@ -718,6 +770,8 @@ class _CodexJsonRpcSession:
                     logger.debug("codex stderr: %s", text)
 
     async def _dispatch_message(self, message: dict) -> None:
+        self._log_rpc_message(direction="<-", payload=message)
+
         request_id = message.get("id")
         method = message.get("method")
 
@@ -849,6 +903,7 @@ class _CodexAppServerBackend:
         ),
         forward_stdout: bool = _env_bool("MESHAGENT_CODEX_FORWARD_STDOUT", False),
         forward_stderr: bool = _env_bool("MESHAGENT_CODEX_FORWARD_STDERR", True),
+        verbose_rpc: bool = _env_bool("MESHAGENT_CODEX_VERBOSE_RPC", False),
         env: Optional[dict[str, str]] = None,
         request_timeout_s: float = 300.0,
         approval_request_handler: Optional[Callable[..., Awaitable[str]]] = None,
@@ -876,6 +931,7 @@ class _CodexAppServerBackend:
         self._approval_policy = approval_policy
         self._sandbox_policy = sandbox_policy
         self._approval_request_handler = approval_request_handler
+        self._request_timeout_s = request_timeout_s
 
         launch_env = os.environ.copy()
         if env is not None:
@@ -892,6 +948,7 @@ class _CodexAppServerBackend:
             env=session_env,
             forward_stdout=forward_stdout,
             forward_stderr=forward_stderr,
+            verbose_rpc=verbose_rpc,
             request_timeout_s=request_timeout_s,
             server_request_handler=self._handle_server_request,
         )
@@ -906,6 +963,34 @@ class _CodexAppServerBackend:
         self._thread_keys_by_thread_id: dict[str, str] = {}
         self._active_turns_lock = asyncio.Lock()
         self._active_turns: dict[str, set[tuple[str, str]]] = {}
+
+    def _normalized_sandbox_mode(self) -> Optional[str]:
+        raw = self._sandbox_policy
+        if not isinstance(raw, str):
+            return None
+
+        normalized = raw.strip().lower().replace("_", "-")
+        if normalized in ("read-only", "readonly"):
+            return "read-only"
+        if normalized in ("workspace-write", "workspacewrite"):
+            return "workspace-write"
+        if normalized in ("danger-full-access", "dangerfullaccess"):
+            return "danger-full-access"
+        return None
+
+    def _turn_sandbox_policy(self) -> Optional[dict]:
+        mode = self._normalized_sandbox_mode()
+        if mode is None:
+            return None
+
+        if mode == "workspace-write":
+            return {"type": "workspaceWrite"}
+        if mode == "danger-full-access":
+            return {"type": "dangerFullAccess"}
+        return {
+            "type": "readOnly",
+            "access": {"type": "fullAccess"},
+        }
 
     async def close(self) -> None:
         if self._router_task is not None:
@@ -956,14 +1041,21 @@ class _CodexAppServerBackend:
         if self._image is not None and self._ws_url is None:
             default_cwd = "/data"
 
+        params = {
+            "model": model,
+            "cwd": self._cwd or default_cwd,
+            "approvalPolicy": self._approval_policy,
+        }
+        sandbox_mode = self._normalized_sandbox_mode()
+        if sandbox_mode is not None:
+            params["sandbox"] = sandbox_mode
+        else:
+            # Older servers may accept this legacy key.
+            params["sandboxPolicy"] = self._sandbox_policy
+
         result = await self._session.request(
             method="thread/start",
-            params={
-                "model": model,
-                "cwd": self._cwd or default_cwd,
-                "approvalPolicy": self._approval_policy,
-                "sandboxPolicy": self._sandbox_policy,
-            },
+            params=params,
         )
         return self._extract_thread_id(result)
 
@@ -1387,7 +1479,17 @@ class _CodexAppServerBackend:
                 f"codex app-server notification router failed: {self._router_error}"
             )
 
-        notification = await turn_queue.get()
+        try:
+            notification = await asyncio.wait_for(
+                turn_queue.get(),
+                timeout=self._request_timeout_s,
+            )
+        except asyncio.TimeoutError as exc:
+            raise CodexAppServerError(
+                "timed out waiting for codex turn events; "
+                f"no events received for {self._request_timeout_s:.0f}s"
+            ) from exc
+
         if notification.get("method") == "__router_error__":
             error = (notification.get("params") or {}).get("error")
             raise CodexAppServerError(
@@ -2327,6 +2429,7 @@ class _CodexAppServerBackend:
         turn_queue: Optional[asyncio.Queue[dict]] = None
         final_text = ""
         output_started = False
+        output_done = False
 
         try:
             normalized_instructions = self._normalize_developer_instructions(
@@ -2338,6 +2441,9 @@ class _CodexAppServerBackend:
                 "input": turn_input,
                 "model": resolved_model,
             }
+            turn_sandbox_policy = self._turn_sandbox_policy()
+            if turn_sandbox_policy is not None:
+                turn_params["sandboxPolicy"] = turn_sandbox_policy
             if normalized_instructions is not None:
                 turn_params["collaborationMode"] = {
                     "mode": "default",
@@ -2419,6 +2525,7 @@ class _CodexAppServerBackend:
                                     "text": final_text,
                                 }
                             )
+                            output_done = True
 
                 elif method == "codex/event/task_complete":
                     msg = params.get("msg")
@@ -2428,6 +2535,17 @@ class _CodexAppServerBackend:
                             completed_text = _get_nested_text(last_message)
                             if completed_text != "":
                                 final_text = completed_text
+
+                    if final_text != "":
+                        if event_handler is not None and not output_done:
+                            event_handler(
+                                {
+                                    "type": "response.output_text.done",
+                                    "text": final_text,
+                                }
+                            )
+                            output_done = True
+                        break
 
                 elif method == "turn/completed":
                     turn = params.get("turn")

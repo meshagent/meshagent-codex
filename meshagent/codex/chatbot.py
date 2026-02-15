@@ -59,6 +59,7 @@ class CodexChatBot(ChatBotBase):
         approval_policy: Optional[str] = None,
         sandbox_policy: Optional[str] = None,
         app_server_env: Optional[dict[str, str]] = None,
+        verbose: bool = False,
     ):
         self._model = model
         adapter_kwargs = {"model": model}
@@ -78,6 +79,8 @@ class CodexChatBot(ChatBotBase):
             adapter_kwargs["sandbox_policy"] = sandbox_policy
         if app_server_env is not None:
             adapter_kwargs["env"] = app_server_env
+        if verbose:
+            adapter_kwargs["verbose_rpc"] = True
 
         self._pending_approvals_lock = asyncio.Lock()
         self._pending_approvals: dict[str, asyncio.Future[str]] = {}
