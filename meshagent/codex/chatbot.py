@@ -15,6 +15,7 @@ from meshagent.agents.chat import (
 from meshagent.agents.thread_adapter import ThreadAdapter
 from meshagent.api import MeshDocument, Requirement
 from meshagent.api import RemoteParticipant
+from meshagent.api.specs.service import ContainerMountSpec
 from meshagent.tools import Toolkit, make_toolkits
 
 from .app_server import _CodexAppServerBackend
@@ -52,6 +53,8 @@ class CodexChatBot(ChatBotBase):
         model: str = "gpt-5.2-codex",
         command: Optional[str] = None,
         ws_url: Optional[str] = None,
+        image: Optional[str] = None,
+        mounts: Optional[ContainerMountSpec] = None,
         cwd: Optional[str] = None,
         approval_policy: Optional[str] = None,
         sandbox_policy: Optional[str] = None,
@@ -63,6 +66,10 @@ class CodexChatBot(ChatBotBase):
             adapter_kwargs["command"] = command
         if ws_url is not None:
             adapter_kwargs["ws_url"] = ws_url
+        if image is not None:
+            adapter_kwargs["image"] = image
+        if mounts is not None:
+            adapter_kwargs["mounts"] = mounts
         if cwd is not None:
             adapter_kwargs["cwd"] = cwd
         if approval_policy is not None:
@@ -563,6 +570,7 @@ class CodexChatBot(ChatBotBase):
         await self._clear_thread_status(path=thread_context.path)
         await self._codex_backend.on_thread_open(
             thread_key=thread_context.path,
+            room=self._room,
             context=thread_context.chat,
             model=self._model,
             skill_dirs=self._skill_dirs,
@@ -757,6 +765,7 @@ class CodexChatBot(ChatBotBase):
 
         await self._codex_backend.on_thread_open(
             thread_key=thread_context.path,
+            room=self._room,
             context=thread_context.chat,
             model=model,
             skill_dirs=self._skill_dirs,

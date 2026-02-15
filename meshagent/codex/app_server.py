@@ -13,11 +13,16 @@ import aiohttp
 from meshagent.agents import ToolResponseAdapter
 from meshagent.agents.agent import AgentChatContext
 from meshagent.api import RoomClient, RoomException, RemoteParticipant
+from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
 from meshagent.tools import Toolkit
 
 from .version import __version__
 
 logger = logging.getLogger("codex.app_server")
+
+DEFAULT_CODEX_CONTAINER_MOUNTS = ContainerMountSpec(
+    room=[RoomStorageMountSpec(path="/data")]
+)
 
 
 class CodexAppServerError(RoomException):
@@ -135,8 +140,10 @@ class _CodexJsonRpcSession:
         *,
         command: Optional[str] = None,
         ws_url: Optional[str] = None,
+        image: Optional[str] = None,
         cwd: Optional[str] = None,
         env: Optional[dict[str, str]] = None,
+        mounts: Optional[ContainerMountSpec] = DEFAULT_CODEX_CONTAINER_MOUNTS,
         forward_stdout: bool = False,
         forward_stderr: bool = True,
         request_timeout_s: float = 300.0,
@@ -144,15 +151,17 @@ class _CodexJsonRpcSession:
             Callable[[str, dict], Awaitable[Optional[dict]]]
         ] = None,
     ):
-        if command is None and ws_url is None:
+        if command is None and ws_url is None and image is None:
             raise CodexAppServerError(
-                "codex transport is not configured (missing command and ws_url)"
+                "codex transport is not configured (missing command, ws_url, and image)"
             )
 
         self._command = command
         self._ws_url = ws_url
+        self._image = image
         self._cwd = cwd
         self._env = env
+        self._mounts = mounts
         self._forward_stdout = forward_stdout
         self._forward_stderr = forward_stderr
         self._request_timeout_s = request_timeout_s
@@ -161,6 +170,9 @@ class _CodexJsonRpcSession:
         self._process: Optional[asyncio.subprocess.Process] = None
         self._client_session: Optional[aiohttp.ClientSession] = None
         self._websocket: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._container_id: Optional[str] = None
+        self._container_exec = None
+        self._room: Optional[RoomClient] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
 
@@ -194,15 +206,35 @@ class _CodexJsonRpcSession:
         if self._websocket is not None and self._websocket.closed:
             self._websocket = None
 
+        if (
+            self._container_exec is not None
+            and hasattr(self._container_exec, "result")
+            and self._container_exec.result.done()
+        ):
+            self._container_exec = None
+
         if self._client_session is not None and self._client_session.closed:
             self._client_session = None
 
-    async def start(self) -> None:
+    def _container_transport_enabled(self) -> bool:
+        return self._image is not None and self._ws_url is None
+
+    def set_room(self, *, room: Optional[RoomClient]) -> None:
+        self._room = room
+
+    async def start(self, *, room: Optional[RoomClient] = None) -> None:
         async with self._start_lock:
             if self._started:
                 return
 
+            if room is not None:
+                self._room = room
+
             self._cleanup_dead_transport_handles()
+            login_api_key: Optional[str] = None
+            key_candidate = (self._env or {}).get("OPENAI_API_KEY")
+            if isinstance(key_candidate, str) and key_candidate.strip() != "":
+                login_api_key = key_candidate.strip()
 
             if self._ws_url is not None:
                 self._client_session = aiohttp.ClientSession()
@@ -218,6 +250,77 @@ class _CodexJsonRpcSession:
                     ) from exc
 
                 self._reader_task = asyncio.create_task(self._read_websocket())
+            elif self._container_transport_enabled():
+                if self._room is None:
+                    raise CodexAppServerError(
+                        "room is required for codex container transport"
+                    )
+
+                if self._command is None:
+                    raise CodexAppServerError("codex command was empty")
+                if self._command.strip() == "":
+                    raise CodexAppServerError("codex command was empty")
+
+                running = False
+                if self._container_id is not None:
+                    with contextlib.suppress(Exception):
+                        for container in await self._room.containers.list():
+                            if container.id == self._container_id:
+                                running = True
+                                break
+
+                    if not running:
+                        self._container_id = None
+
+                if self._container_id is None:
+                    container_env = dict(self._env or {})
+
+                    if (
+                        not isinstance(container_env.get("OPENAI_BASE_URL"), str)
+                        or container_env.get("OPENAI_BASE_URL", "").strip() == ""
+                    ):
+                        protocol_url = getattr(self._room.protocol, "url", None)
+                        if isinstance(protocol_url, str) and protocol_url.strip() != "":
+                            room_url = protocol_url.strip().rstrip("/")
+                            if room_url.startswith("wss:"):
+                                room_url = "https:" + room_url.removeprefix("wss:")
+                            elif room_url.startswith("ws:"):
+                                room_url = "http:" + room_url.removeprefix("ws:")
+                            container_env["OPENAI_BASE_URL"] = f"{room_url}/openai/v1"
+
+                    try:
+                        self._container_id = await self._room.containers.run(
+                            command="sleep infinity",
+                            image=self._image,
+                            mounts=self._mounts,
+                            writable_root_fs=True,
+                            env=container_env,
+                        )
+                    except Exception as exc:
+                        raise CodexAppServerError(
+                            f"unable to launch codex app-server container image: {self._image}"
+                        ) from exc
+
+                command_to_run = self._command
+                if self._cwd is not None and self._cwd.strip() != "":
+                    command_to_run = (
+                        f"cd {shlex.quote(self._cwd.strip())} && {command_to_run}"
+                    )
+
+                try:
+                    logger.info(f"starting codex: {command_to_run}")
+                    self._container_exec = await self._room.containers.exec(
+                        container_id=self._container_id,
+                        command=["bash", "-lc", command_to_run],
+                        tty=False,
+                    )
+                except Exception as exc:
+                    raise CodexAppServerError(
+                        "unable to start codex app-server in container"
+                    ) from exc
+
+                self._reader_task = asyncio.create_task(self._read_container_stdout())
+                self._stderr_task = asyncio.create_task(self._read_container_stderr())
             else:
                 if self._command is None:
                     raise CodexAppServerError("codex command was empty")
@@ -263,6 +366,22 @@ class _CodexJsonRpcSession:
                 ensure_started=False,
             )
 
+            if login_api_key is None and self._room is not None:
+                token = getattr(self._room.protocol, "token", None)
+                if isinstance(token, str) and token.strip() != "":
+                    login_api_key = token.strip()
+
+            if login_api_key is not None:
+                logger.info("authenticating codex app-server via account/login/start")
+                await self._request(
+                    method="account/login/start",
+                    params={
+                        "type": "apiKey",
+                        "apiKey": login_api_key,
+                    },
+                    ensure_started=False,
+                )
+
             self._started = True
 
     async def close(self) -> None:
@@ -270,6 +389,8 @@ class _CodexJsonRpcSession:
             self._process is None
             and self._websocket is None
             and self._client_session is None
+            and self._container_exec is None
+            and self._container_id is None
         ):
             return
 
@@ -316,7 +437,25 @@ class _CodexJsonRpcSession:
                     await self._process.wait()
 
             self._process = None
+
+        if self._container_exec is not None:
+            with contextlib.suppress(Exception):
+                await self._container_exec.kill()
+            with contextlib.suppress(Exception):
+                await self._container_exec.result
+            self._container_exec = None
+
+        if self._container_id is not None:
+            if self._room is not None:
+                with contextlib.suppress(Exception):
+                    await self._room.containers.stop(
+                        container_id=self._container_id,
+                        force=True,
+                    )
+            self._container_id = None
+
         self._started = False
+        self._room = None
 
     async def request(self, *, method: str, params: Optional[dict] = None) -> Any:
         return await self._request(method=method, params=params, ensure_started=True)
@@ -384,6 +523,12 @@ class _CodexJsonRpcSession:
                 await self._websocket.send_str(encoded)
             return
 
+        if self._container_exec is not None:
+            encoded = (json.dumps(payload) + "\n").encode("utf-8")
+            async with self._write_lock:
+                await self._container_exec.write(encoded)
+            return
+
         if self._process is None or self._process.stdin is None:
             raise CodexAppServerError("codex app-server transport is not running")
 
@@ -434,6 +579,92 @@ class _CodexJsonRpcSession:
             message = f"codex app-server subprocess exited unexpectedly with return code {return_code}"
         self._mark_transport_failure(message=message)
         self._process = None
+
+    async def _read_container_stdout(self) -> None:
+        if self._container_exec is None:
+            return
+
+        buffer = bytearray()
+        try:
+            async for chunk in self._container_exec.stdout():
+                if not chunk:
+                    continue
+
+                buffer.extend(chunk)
+                while True:
+                    newline_index = buffer.find(b"\n")
+                    if newline_index < 0:
+                        break
+
+                    raw_line = bytes(buffer[:newline_index])
+                    del buffer[: newline_index + 1]
+
+                    text = raw_line.decode("utf-8", errors="replace").strip()
+                    if text == "":
+                        continue
+
+                    if self._forward_stdout:
+                        print(text, file=sys.stdout, flush=True)
+
+                    await self._handle_message_text(text=text)
+
+            if len(buffer) > 0:
+                text = buffer.decode("utf-8", errors="replace").strip()
+                if text != "":
+                    if self._forward_stdout:
+                        print(text, file=sys.stdout, flush=True)
+                    await self._handle_message_text(text=text)
+        except asyncio.CancelledError:
+            raise
+
+        status_text: Optional[str] = None
+        if self._container_exec is not None:
+            with contextlib.suppress(Exception):
+                result = await self._container_exec.result
+                if result is not None:
+                    status_text = str(result)
+
+        if status_text is None or status_text == "":
+            message = "codex app-server container stdout closed unexpectedly"
+        else:
+            message = (
+                "codex app-server container exec exited unexpectedly with status "
+                f"{status_text}"
+            )
+        self._mark_transport_failure(message=message)
+        self._container_exec = None
+
+    async def _read_container_stderr(self) -> None:
+        if self._container_exec is None:
+            return
+
+        buffer = bytearray()
+        async for chunk in self._container_exec.stderr():
+            if not chunk:
+                continue
+
+            buffer.extend(chunk)
+            while True:
+                newline_index = buffer.find(b"\n")
+                if newline_index < 0:
+                    break
+
+                raw_line = bytes(buffer[:newline_index])
+                del buffer[: newline_index + 1]
+                text = raw_line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    if self._forward_stderr:
+                        print(text, file=sys.stderr, flush=True)
+                    else:
+                        logger.debug("codex stderr: %s", text)
+
+        if len(buffer) > 0:
+            text = buffer.decode("utf-8", errors="replace").rstrip()
+            if text:
+                if self._forward_stderr:
+                    print(text, file=sys.stderr, flush=True)
+                else:
+                    logger.debug("codex stderr: %s", text)
 
     async def _read_websocket(self) -> None:
         if self._websocket is None:
@@ -609,6 +840,8 @@ class _CodexAppServerBackend:
         model: str = os.getenv("CODEX_MODEL", "codex-mini-latest"),
         command: Optional[str] = os.getenv("MESHAGENT_CODEX_COMMAND"),
         ws_url: Optional[str] = os.getenv("MESHAGENT_CODEX_WS_URL"),
+        image: Optional[str] = os.getenv("MESHAGENT_CODEX_IMAGE"),
+        mounts: Optional[ContainerMountSpec] = DEFAULT_CODEX_CONTAINER_MOUNTS,
         cwd: Optional[str] = os.getenv("MESHAGENT_CODEX_CWD"),
         approval_policy: str = os.getenv("MESHAGENT_CODEX_APPROVAL_POLICY", "never"),
         sandbox_policy: str = os.getenv(
@@ -621,14 +854,24 @@ class _CodexAppServerBackend:
         approval_request_handler: Optional[Callable[..., Awaitable[str]]] = None,
     ):
         if ws_url is None and command is None:
-            command = "codex app-server"
+            if image is not None:
+                command = (
+                    "codex app-server "
+                    "-c model_providers.openai.name='OpenAI' "
+                    '-c model_providers.openai.base_url="$OPENAI_BASE_URL"'
+                )
+            else:
+                command = "codex app-server"
         elif ws_url is not None:
             # Explicit websocket transport takes precedence over local process launch.
             command = None
+            image = None
 
         self._model = model
         self._command = command
         self._ws_url = ws_url
+        self._image = image
+        self._mounts = mounts
         self._cwd = cwd
         self._approval_policy = approval_policy
         self._sandbox_policy = sandbox_policy
@@ -637,12 +880,16 @@ class _CodexAppServerBackend:
         launch_env = os.environ.copy()
         if env is not None:
             launch_env.update(env)
+        container_env = env or {}
+        session_env = container_env if image is not None else launch_env
 
         self._session = _CodexJsonRpcSession(
             command=command,
             ws_url=ws_url,
+            image=image,
+            mounts=mounts,
             cwd=cwd,
-            env=launch_env,
+            env=session_env,
             forward_stdout=forward_stdout,
             forward_stderr=forward_stderr,
             request_timeout_s=request_timeout_s,
@@ -705,11 +952,15 @@ class _CodexAppServerBackend:
         *,
         model: str,
     ) -> str:
+        default_cwd = os.getcwd()
+        if self._image is not None and self._ws_url is None:
+            default_cwd = "/data"
+
         result = await self._session.request(
             method="thread/start",
             params={
                 "model": model,
-                "cwd": self._cwd or os.getcwd(),
+                "cwd": self._cwd or default_cwd,
                 "approvalPolicy": self._approval_policy,
                 "sandboxPolicy": self._sandbox_policy,
             },
@@ -875,6 +1126,7 @@ class _CodexAppServerBackend:
         self,
         *,
         thread_key: str,
+        room: RoomClient,
         context: AgentChatContext,
         model: Optional[str] = None,
         skill_dirs: Optional[list[str]] = None,
@@ -882,7 +1134,7 @@ class _CodexAppServerBackend:
         if model is None:
             model = self._model
 
-        await self._ensure_router_started()
+        await self._ensure_router_started(room=room)
 
         existing_state = await self._get_thread_state(thread_key=thread_key)
         if existing_state is not None:
@@ -1087,8 +1339,9 @@ class _CodexAppServerBackend:
                         }
                     )
 
-    async def _ensure_router_started(self) -> None:
-        await self._session.start()
+    async def _ensure_router_started(self, *, room: Optional[RoomClient]) -> None:
+        self._session.set_room(room=room)
+        await self._session.start(room=room)
 
         async with self._router_start_lock:
             if self._router_task is not None and not self._router_task.done():
@@ -2054,7 +2307,6 @@ class _CodexAppServerBackend:
         model: Optional[str] = None,
         on_behalf_of: Optional[RemoteParticipant] = None,
     ) -> Any:
-        del room
         del toolkits
         del tool_adapter
         del on_behalf_of
@@ -2062,7 +2314,7 @@ class _CodexAppServerBackend:
         resolved_model = self._resolve_model(model=model)
         turn_input = self._normalize_turn_input(message=message)
 
-        await self._ensure_router_started()
+        await self._ensure_router_started(room=room)
 
         thread_state = await self._get_thread_state(thread_key=thread_key)
         if thread_state is None:

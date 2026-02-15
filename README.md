@@ -1,11 +1,13 @@
 # meshagent-codex
 
-`meshagent-codex` adds a Codex app-server backed `CodexChatBot`
-that reuses MeshAgent chat thread handling and control messages.
+`meshagent-codex` adds Codex app-server backed agents:
+- `CodexChatBot`
+- `CodexTaskRunner`
 
 ## Included
 
 - `CodexChatBot`: chat agent backed by `codex app-server`
+- `CodexTaskRunner`: task runner backed by `codex app-server`
 
 ## Example
 
