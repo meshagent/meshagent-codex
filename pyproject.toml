@@ -10,9 +10,9 @@ requires-python = ">=3.13"
 license = "Apache-2.0"
 keywords = []
 dependencies = [
-  "meshagent-api~=0.27.0",
-  "meshagent-agents~=0.27.0",
-  "meshagent-tools~=0.27.0",
+  "meshagent-api~=0.27.2",
+  "meshagent-agents~=0.27.2",
+  "meshagent-tools~=0.27.2",
   "pytest~=8.4",
   "pytest-asyncio~=0.26",
 ]
