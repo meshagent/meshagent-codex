@@ -1499,49 +1499,32 @@ class _CodexAppServerBackend:
         return notification
 
     def _extract_delta(self, *, params: dict) -> str:
-        def _delta_text(value: Any) -> str:
-            if isinstance(value, str):
-                return value
-
-            if isinstance(value, dict):
-                for key in (
-                    "delta",
-                    "textDelta",
-                    "text_delta",
-                    "text",
-                    "value",
-                    "content",
-                ):
-                    nested_text = _delta_text(value.get(key))
-                    if nested_text != "":
-                        return nested_text
-                return ""
-
-            if isinstance(value, list):
-                text = _to_text(value)
-                if text != "":
-                    return text
-
+        def _delta_from_mapping(mapping: dict) -> str:
+            for key in ("delta", "textDelta", "text_delta"):
+                value = mapping.get(key)
+                if isinstance(value, str) and value != "":
+                    return value
+                if isinstance(value, (list, dict)):
+                    text = _to_text(value)
+                    if text != "":
+                        return text
             return ""
 
-        for key in ("delta", "textDelta", "text_delta", "text", "content"):
-            delta = _delta_text(params.get(key))
-            if delta != "":
-                return delta
+        delta = _delta_from_mapping(params)
+        if delta != "":
+            return delta
 
         item = params.get("item")
         if isinstance(item, dict):
-            for key in ("delta", "textDelta", "text_delta", "text", "content"):
-                delta = _delta_text(item.get(key))
-                if delta != "":
-                    return delta
+            delta = _delta_from_mapping(item)
+            if delta != "":
+                return delta
 
         msg = params.get("msg")
         if isinstance(msg, dict):
-            for key in ("delta", "textDelta", "text_delta", "text", "content"):
-                delta = _delta_text(msg.get(key))
-                if delta != "":
-                    return delta
+            delta = _delta_from_mapping(msg)
+            if delta != "":
+                return delta
 
         return ""
 
@@ -1673,6 +1656,13 @@ class _CodexAppServerBackend:
                     return text
         return ""
 
+    def _first_text_raw(self, *, source: dict, keys: tuple[str, ...]) -> str:
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, str) and value != "":
+                return value
+        return ""
+
     def _first_nested_text(self, *, value: Any, keys: tuple[str, ...]) -> str:
         key_set = {key.lower() for key in keys}
 
@@ -1691,6 +1681,29 @@ class _CodexAppServerBackend:
         elif isinstance(value, list):
             for nested in value:
                 text = self._first_nested_text(value=nested, keys=keys)
+                if text != "":
+                    return text
+
+        return ""
+
+    def _first_nested_text_raw(self, *, value: Any, keys: tuple[str, ...]) -> str:
+        key_set = {key.lower() for key in keys}
+
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if key.lower() in key_set:
+                    text = _to_text(nested)
+                    if text != "":
+                        return text
+
+            for nested in value.values():
+                text = self._first_nested_text_raw(value=nested, keys=keys)
+                if text != "":
+                    return text
+
+        elif isinstance(value, list):
+            for nested in value:
+                text = self._first_nested_text_raw(value=nested, keys=keys)
                 if text != "":
                     return text
 
@@ -1912,7 +1925,7 @@ class _CodexAppServerBackend:
         return "Command", details
 
     def _reasoning_text(self, *, params: dict, item: dict) -> str:
-        text = self._first_text(
+        text = self._first_text_raw(
             source=params,
             keys=(
                 "delta",
@@ -1926,21 +1939,21 @@ class _CodexAppServerBackend:
 
         part = params.get("part")
         if isinstance(part, dict):
-            text = self._first_nested_text(
+            text = self._first_nested_text_raw(
                 value=part,
                 keys=("delta", "summary", "text", "content", "value", "message"),
             )
             if text != "":
                 return text
 
-        text = self._first_nested_text(
+        text = self._first_nested_text_raw(
             value=item,
             keys=("summary", "text", "delta", "content", "value", "message"),
         )
         if text != "":
             return text
 
-        text = self._first_nested_text(
+        text = self._first_nested_text_raw(
             value=params,
             keys=("delta", "summary", "text", "content", "value", "message"),
         )
@@ -2595,6 +2608,10 @@ class _CodexAppServerBackend:
         final_text = ""
         output_started = False
         output_done = False
+        # Some app-server builds emit both delta method variants with identical
+        # chunks. Lock to the first variant seen per turn to avoid duplicating
+        # streamed text.
+        message_delta_mode: Optional[str] = None
 
         try:
             normalized_instructions = self._normalize_developer_instructions(
@@ -2667,9 +2684,17 @@ class _CodexAppServerBackend:
                     "item/agentmessage/content_delta",
                     "item/agent_message/delta",
                     "item/agent_message/content_delta",
-                    "codex/event/agent_message_delta",
-                    "codex/event/agent_message_content_delta",
                 ):
+                    next_mode = (
+                        "content_delta"
+                        if method_lower.endswith("content_delta")
+                        else "delta"
+                    )
+                    if message_delta_mode is None:
+                        message_delta_mode = next_mode
+                    elif message_delta_mode != next_mode:
+                        continue
+
                     delta = self._extract_delta(params=params)
                     if delta != "":
                         if not output_started:
@@ -2680,7 +2705,10 @@ class _CodexAppServerBackend:
                         final_text += delta
                         if event_handler is not None:
                             event_handler(
-                                {"type": "response.output_text.delta", "delta": delta}
+                                {
+                                    "type": "response.output_text.delta",
+                                    "delta": delta,
+                                }
                             )
 
                 elif method_lower in ("item/completed", "codex/event/item_completed"):

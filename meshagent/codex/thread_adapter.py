@@ -49,19 +49,29 @@ class CodexThreadAdapter(ThreadAdapter):
         headline: str,
         details: str,
         method: str,
+        is_delta: bool,
     ) -> str:
-        candidates = [summary, details, headline]
+        candidates = (
+            [details, summary, headline]
+            if is_delta
+            else [
+                summary,
+                details,
+                headline,
+            ]
+        )
         method_normalized = method.strip().lower()
 
         for candidate in candidates:
             if not isinstance(candidate, str):
                 continue
-            text = candidate.strip()
+            text = candidate if is_delta else candidate.strip()
             if text == "":
                 continue
-            if text.lower() == method_normalized:
+            normalized = text.strip().lower()
+            if normalized == method_normalized:
                 continue
-            if text.lower() in (
+            if normalized in (
                 "reasoning",
                 "reasoned",
                 "reasoning failed",
@@ -107,14 +117,15 @@ class CodexThreadAdapter(ThreadAdapter):
             item_id=item_id,
             method=method,
         )
+        is_delta = self._is_reasoning_delta_method(method=method)
         text = self._reasoning_text(
             summary=summary,
             headline=headline,
             details=details,
             method=method,
+            is_delta=is_delta,
         )
         in_progress = self._is_active_state(state=state)
-        is_delta = self._is_reasoning_delta_method(method=method)
         is_done = self._is_reasoning_done_method(method=method)
 
         reasoning_element: Element | None = None
@@ -125,7 +136,7 @@ class CodexThreadAdapter(ThreadAdapter):
             reasoning_element = messages.append_child(
                 tag_name="reasoning",
                 attributes={
-                    "summary": text if text != "" else "",
+                    "summary": "" if is_delta else (text if text != "" else ""),
                     "created_at": now,
                 },
             )
@@ -135,8 +146,7 @@ class CodexThreadAdapter(ThreadAdapter):
                 prior = reasoning_element.get_attribute("summary")
                 if not isinstance(prior, str):
                     prior = ""
-                if not prior.endswith(text):
-                    reasoning_element.set_attribute("summary", f"{prior}{text}")
+                reasoning_element.set_attribute("summary", f"{prior}{text}")
             else:
                 reasoning_element.set_attribute("summary", text)
 
@@ -170,24 +180,10 @@ class CodexThreadAdapter(ThreadAdapter):
             source = "codex" if event_type == "codex.event" else "agent"
         source = source.strip()
 
-        summary = event.get("summary")
-        if not isinstance(summary, str) or summary.strip() == "":
-            summary = method
-        summary = summary.strip()
+        raw_summary = event.get("summary")
+        raw_headline = event.get("headline")
 
-        headline = event.get("headline")
-        if not isinstance(headline, str):
-            headline = ""
-        headline = headline.strip()
-
-        details = event.get("details")
-        if isinstance(details, list):
-            detail_lines = [line.strip() for line in details if isinstance(line, str)]
-            details = "\n".join(line for line in detail_lines if line != "")
-        elif isinstance(details, str):
-            details = details.strip()
-        else:
-            details = ""
+        raw_details = event.get("details")
 
         data = event.get("data")
         if not isinstance(data, str):
@@ -204,6 +200,33 @@ class CodexThreadAdapter(ThreadAdapter):
         if not isinstance(kind, str) or kind.strip() == "":
             return
         kind = kind.strip().lower()
+
+        details: str
+        if isinstance(raw_details, list):
+            if kind == "reasoning":
+                detail_lines = [line for line in raw_details if isinstance(line, str)]
+                details = "\n".join(detail_lines)
+            else:
+                detail_lines = [
+                    line.strip() for line in raw_details if isinstance(line, str)
+                ]
+                details = "\n".join(line for line in detail_lines if line != "")
+        elif isinstance(raw_details, str):
+            details = raw_details if kind == "reasoning" else raw_details.strip()
+        else:
+            details = ""
+
+        if isinstance(raw_summary, str):
+            summary = raw_summary if kind == "reasoning" else raw_summary.strip()
+        else:
+            summary = ""
+        if summary == "":
+            summary = method
+
+        if isinstance(raw_headline, str):
+            headline = raw_headline if kind == "reasoning" else raw_headline.strip()
+        else:
+            headline = ""
 
         state = event.get("state")
         if not isinstance(state, str) or state.strip() == "":
