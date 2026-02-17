@@ -1499,24 +1499,49 @@ class _CodexAppServerBackend:
         return notification
 
     def _extract_delta(self, *, params: dict) -> str:
-        for key in ("delta", "textDelta", "text_delta"):
-            value = params.get(key)
+        def _delta_text(value: Any) -> str:
             if isinstance(value, str):
                 return value
 
+            if isinstance(value, dict):
+                for key in (
+                    "delta",
+                    "textDelta",
+                    "text_delta",
+                    "text",
+                    "value",
+                    "content",
+                ):
+                    nested_text = _delta_text(value.get(key))
+                    if nested_text != "":
+                        return nested_text
+                return ""
+
+            if isinstance(value, list):
+                text = _to_text(value)
+                if text != "":
+                    return text
+
+            return ""
+
+        for key in ("delta", "textDelta", "text_delta", "text", "content"):
+            delta = _delta_text(params.get(key))
+            if delta != "":
+                return delta
+
         item = params.get("item")
         if isinstance(item, dict):
-            for key in ("delta", "textDelta", "text_delta"):
-                value = item.get(key)
-                if isinstance(value, str):
-                    return value
+            for key in ("delta", "textDelta", "text_delta", "text", "content"):
+                delta = _delta_text(item.get(key))
+                if delta != "":
+                    return delta
 
         msg = params.get("msg")
         if isinstance(msg, dict):
-            for key in ("delta", "textDelta", "text_delta"):
-                value = msg.get(key)
-                if isinstance(value, str):
-                    return value
+            for key in ("delta", "textDelta", "text_delta", "text", "content"):
+                delta = _delta_text(msg.get(key))
+                if delta != "":
+                    return delta
 
         return ""
 
@@ -1605,6 +1630,7 @@ class _CodexAppServerBackend:
         if lower in (
             "item/agentmessage/delta",
             "codex/event/agent_message_delta",
+            "codex/event/agent_message_content_delta",
         ):
             return False
 
@@ -1619,8 +1645,11 @@ class _CodexAppServerBackend:
         # Avoid flooding thread history with token- or stream-level deltas.
         if (
             lower.endswith("/delta")
+            or lower.endswith("_delta")
             or lower.endswith("/outputdelta")
+            or lower.endswith("_outputdelta")
             or lower.endswith("/textdelta")
+            or lower.endswith("_textdelta")
             or lower.endswith("/terminalinteraction")
         ):
             return False
@@ -2609,6 +2638,9 @@ class _CodexAppServerBackend:
                 notification = await self._next_turn_notification(turn_queue=turn_queue)
 
                 method = notification.get("method")
+                if not isinstance(method, str):
+                    continue
+                method_lower = method.lower()
                 params = notification.get("params") or {}
                 if not isinstance(params, dict):
                     continue
@@ -2623,16 +2655,20 @@ class _CodexAppServerBackend:
                         )
                     )
 
-                if method in ("item/started", "codex/event/item_started"):
+                if method_lower in ("item/started", "codex/event/item_started"):
                     item = self._extract_item(params=params)
                     if _is_agent_message(item) and not output_started:
                         output_started = True
                         if event_handler is not None:
                             event_handler({"type": "response.content_part.added"})
 
-                elif method in (
-                    "item/agentMessage/delta",
+                elif method_lower in (
+                    "item/agentmessage/delta",
+                    "item/agentmessage/content_delta",
+                    "item/agent_message/delta",
+                    "item/agent_message/content_delta",
                     "codex/event/agent_message_delta",
+                    "codex/event/agent_message_content_delta",
                 ):
                     delta = self._extract_delta(params=params)
                     if delta != "":
@@ -2647,7 +2683,7 @@ class _CodexAppServerBackend:
                                 {"type": "response.output_text.delta", "delta": delta}
                             )
 
-                elif method in ("item/completed", "codex/event/item_completed"):
+                elif method_lower in ("item/completed", "codex/event/item_completed"):
                     item = self._extract_item(params=params)
                     if _is_agent_message(item):
                         completed_text = _get_nested_text(item)
@@ -2663,7 +2699,7 @@ class _CodexAppServerBackend:
                             )
                             output_done = True
 
-                elif method == "codex/event/task_complete":
+                elif method_lower == "codex/event/task_complete":
                     msg = params.get("msg")
                     if isinstance(msg, dict):
                         last_message = msg.get("last_agent_message")
@@ -2683,7 +2719,7 @@ class _CodexAppServerBackend:
                             output_done = True
                         break
 
-                elif method == "turn/completed":
+                elif method_lower == "turn/completed":
                     turn = params.get("turn")
                     if isinstance(turn, dict):
                         status = turn.get("status")
