@@ -1581,11 +1581,25 @@ class _CodexAppServerBackend:
 
         return turn_input
 
+    def _is_reasoning_method(self, *, method: str) -> bool:
+        lower = method.lower()
+        normalized = self._normalize_name(value=lower)
+        if normalized.startswith("responsereasoning"):
+            return True
+        if "reasoning" in normalized and (
+            "summarytext" in normalized or "summarypart" in normalized
+        ):
+            return True
+        return False
+
     def _should_emit_status_event(self, *, method: Optional[str]) -> bool:
         if not isinstance(method, str) or method == "":
             return False
 
         lower = method.lower()
+
+        if self._is_reasoning_method(method=lower):
+            return True
 
         # Assistant message text deltas are already streamed as normal chat output.
         if lower in (
@@ -1606,8 +1620,6 @@ class _CodexAppServerBackend:
         if (
             lower.endswith("/delta")
             or lower.endswith("/outputdelta")
-            or lower.endswith("/summarytextdelta")
-            or lower.endswith("/summarypartadded")
             or lower.endswith("/textdelta")
             or lower.endswith("/terminalinteraction")
         ):
@@ -1836,9 +1848,14 @@ class _CodexAppServerBackend:
         if command == "" and len(action_details) == 0:
             return None, []
 
+        is_exploration = self._is_exploration_actions(action_details=action_details)
+
         details: list[str] = []
         if command != "":
-            details.append(command)
+            if is_exploration:
+                details.append(f"Run {command}")
+            else:
+                details.append(command)
         for detail in action_details:
             if command != "" and detail.lower().startswith("run "):
                 continue
@@ -1846,13 +1863,7 @@ class _CodexAppServerBackend:
                 continue
             details.append(detail)
 
-        is_exploration = self._is_exploration_actions(action_details=action_details)
         if is_exploration:
-            if command != "":
-                command_line = f"Run {command}"
-                if command_line not in details:
-                    details.insert(0, command_line)
-
             if status == "failed":
                 return "Exploration Failed", details
             if status == "cancelled":
@@ -1870,6 +1881,101 @@ class _CodexAppServerBackend:
         if status == "completed":
             return "Ran Command", details
         return "Command", details
+
+    def _reasoning_text(self, *, params: dict, item: dict) -> str:
+        text = self._first_text(
+            source=params,
+            keys=(
+                "delta",
+                "summary",
+                "text",
+                "message",
+            ),
+        )
+        if text != "":
+            return text
+
+        part = params.get("part")
+        if isinstance(part, dict):
+            text = self._first_nested_text(
+                value=part,
+                keys=("delta", "summary", "text", "content", "value", "message"),
+            )
+            if text != "":
+                return text
+
+        text = self._first_nested_text(
+            value=item,
+            keys=("summary", "text", "delta", "content", "value", "message"),
+        )
+        if text != "":
+            return text
+
+        text = self._first_nested_text(
+            value=params,
+            keys=("delta", "summary", "text", "content", "value", "message"),
+        )
+        return text
+
+    def _reasoning_display(
+        self, *, status: str, params: dict, item: dict
+    ) -> tuple[str, list[str]]:
+        text = self._reasoning_text(params=params, item=item)
+        if self._is_active_state(state=status):
+            headline = "Reasoning"
+        elif status == "completed":
+            headline = "Reasoned"
+        elif status == "failed":
+            headline = "Reasoning Failed"
+        elif status == "cancelled":
+            headline = "Reasoning Cancelled"
+        else:
+            headline = "Reasoning"
+        return headline, [text] if text != "" else []
+
+    def _reasoning_summary(
+        self,
+        *,
+        params: dict,
+        item: dict,
+        headline: Optional[str],
+    ) -> Optional[str]:
+        text = self._reasoning_text(params=params, item=item).strip()
+        if text != "":
+            return self._truncate_text(text=text, limit=280)
+
+        if isinstance(headline, str) and headline.strip() != "":
+            return self._truncate_text(text=headline.strip(), limit=280)
+
+        return None
+
+    def _exec_summary(
+        self,
+        *,
+        status: str,
+        item: dict,
+        headline: Optional[str],
+    ) -> Optional[str]:
+        action_details = self._extract_exec_action_details(item=item)
+        for detail in action_details:
+            text = detail.strip()
+            if text == "":
+                continue
+            if text.lower().startswith("run "):
+                continue
+            return self._truncate_text(text=text, limit=280)
+
+        command = self._extract_exec_command(item=item)
+        if command != "":
+            text = command
+            if self._is_active_state(state=status):
+                text = f"Run {command}"
+            return self._truncate_text(text=text, limit=280)
+
+        if isinstance(headline, str) and headline.strip() != "":
+            return self._truncate_text(text=headline.strip(), limit=280)
+
+        return None
 
     def _line_count_summary(self, *, added: int, removed: int) -> str:
         return f"(+{added} -{removed})"
@@ -1974,6 +2080,9 @@ class _CodexAppServerBackend:
 
         if kind == "exec":
             return self._exec_display(status=status, item=item)
+
+        if kind == "reasoning":
+            return self._reasoning_display(status=status, params=params, item=item)
 
         if kind == "diff":
             raw_changes = item.get("changes")
@@ -2209,6 +2318,7 @@ class _CodexAppServerBackend:
 
     def _status_from_notification(self, *, method: str, params: dict) -> str:
         lower = method.lower()
+        normalized = self._normalize_name(value=lower)
 
         if (
             lower.endswith("/failed")
@@ -2244,6 +2354,12 @@ class _CodexAppServerBackend:
             return "completed"
         if lower.endswith("/started") or lower.endswith("_started"):
             return "in_progress"
+
+        if "reasoning" in normalized:
+            if "summarytextdone" in normalized or "summarypartdone" in normalized:
+                return "completed"
+            if "summarytextdelta" in normalized or "summarypartadded" in normalized:
+                return "in_progress"
 
         payload_status = self._status_from_payload(params=params)
         if payload_status is not None:
@@ -2327,6 +2443,9 @@ class _CodexAppServerBackend:
 
         lower = method.lower()
 
+        if self._is_reasoning_method(method=lower):
+            return "reasoning"
+
         if lower.startswith("turn/plan/"):
             return "plan"
         if lower.startswith("turn/diff/"):
@@ -2373,6 +2492,29 @@ class _CodexAppServerBackend:
             kind=kind,
             item=item,
         )
+        summary = self._status_summary(
+            method=method,
+            params=params,
+            status=status,
+        )
+        if kind == "exec":
+            exec_summary = self._exec_summary(
+                status=status,
+                item=item,
+                headline=headline,
+            )
+            if exec_summary is not None:
+                summary = exec_summary
+        elif kind == "reasoning":
+            reasoning_summary = self._reasoning_summary(
+                params=params,
+                item=item,
+                headline=headline,
+            )
+            if reasoning_summary is not None:
+                summary = reasoning_summary
+        elif isinstance(headline, str) and headline.strip() != "":
+            summary = self._truncate_text(text=headline.strip(), limit=280)
 
         return {
             "type": "agent.event",
@@ -2386,13 +2528,7 @@ class _CodexAppServerBackend:
             "item_type": item_type if item_type != "" else None,
             "headline": headline,
             "details": detail_lines,
-            "summary": headline
-            if isinstance(headline, str) and headline.strip() != ""
-            else self._status_summary(
-                method=method,
-                params=params,
-                status=status,
-            ),
+            "summary": summary,
             "data": self._stringify_status_payload(value=params),
         }
 

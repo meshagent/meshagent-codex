@@ -13,6 +13,7 @@ from meshagent.agents.chat import (
     ChatThreadContext,
 )
 from meshagent.agents.thread_adapter import ThreadAdapter
+from meshagent.api.chan import ChanClosed
 from meshagent.api import MeshDocument, Requirement
 from meshagent.api import RemoteParticipant
 from meshagent.api.specs.service import ContainerMountSpec
@@ -147,23 +148,35 @@ class CodexChatBot(ChatBotBase):
         if self._room is None or self._room.local_participant is None:
             return
 
+        async def set_local_attribute(
+            attribute_name: str, value: Optional[str]
+        ) -> None:
+            try:
+                await self._room.local_participant.set_attribute(attribute_name, value)
+            except ChanClosed:
+                # Expected during shutdown/disconnect while clearing per-thread status.
+                logger.debug(
+                    "room channel closed while setting thread status '%s'",
+                    attribute_name,
+                )
+
         attribute_name = self._thread_status_attribute_name(path=path)
         if status is None:
             self._thread_status_values.pop(path, None)
-            await self._room.local_participant.set_attribute(attribute_name, None)
+            await set_local_attribute(attribute_name, None)
             return
 
         normalized = status.strip()
         if normalized == "":
             self._thread_status_values.pop(path, None)
-            await self._room.local_participant.set_attribute(attribute_name, None)
+            await set_local_attribute(attribute_name, None)
             return
 
         if self._thread_status_values.get(path) == normalized:
             return
 
         self._thread_status_values[path] = normalized
-        await self._room.local_participant.set_attribute(attribute_name, normalized)
+        await set_local_attribute(attribute_name, normalized)
 
     async def _apply_thread_status(
         self,

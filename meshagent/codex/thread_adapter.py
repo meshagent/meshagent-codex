@@ -12,6 +12,7 @@ class CodexThreadAdapter(ThreadAdapter):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._active_events_by_key: dict[str, Element] = {}
+        self._active_reasoning_by_key: dict[str, Element] = {}
         self._persisted_kinds = {
             "exec",
             "tool",
@@ -25,6 +26,128 @@ class CodexThreadAdapter(ThreadAdapter):
     def _is_active_state(self, *, state: str) -> bool:
         normalized = state.strip().lower()
         return normalized in ("in_progress", "queued", "running")
+
+    def _normalized_token(self, *, value: str) -> str:
+        return "".join(ch for ch in value.lower() if ch.isalnum())
+
+    def _is_reasoning_delta_method(self, *, method: str) -> bool:
+        normalized = self._normalized_token(value=method)
+        return "summarytextdelta" in normalized
+
+    def _is_reasoning_done_method(self, *, method: str) -> bool:
+        normalized = self._normalized_token(value=method)
+        return (
+            "summarypartdone" in normalized
+            or "summarytextdone" in normalized
+            or normalized.endswith("done")
+        )
+
+    def _reasoning_text(
+        self,
+        *,
+        summary: str,
+        headline: str,
+        details: str,
+        method: str,
+    ) -> str:
+        candidates = [summary, details, headline]
+        method_normalized = method.strip().lower()
+
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            text = candidate.strip()
+            if text == "":
+                continue
+            if text.lower() == method_normalized:
+                continue
+            if text.lower() in (
+                "reasoning",
+                "reasoned",
+                "reasoning failed",
+                "reasoning cancelled",
+            ):
+                continue
+            return text
+
+        return ""
+
+    def _reasoning_key(
+        self,
+        *,
+        correlation_key: str | None,
+        item_id: str,
+        method: str,
+    ) -> str | None:
+        if correlation_key is not None:
+            return correlation_key
+        if item_id.strip() != "":
+            return f"item:{item_id.strip()}"
+        method_key = method.strip().lower()
+        if method_key != "":
+            return f"method:{method_key}"
+        return None
+
+    def _upsert_reasoning(
+        self,
+        *,
+        messages: Element,
+        state: str,
+        method: str,
+        summary: str,
+        headline: str,
+        details: str,
+        item_id: str,
+        correlation_key: str | None,
+        drop_correlation_keys: list[str],
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        reasoning_key = self._reasoning_key(
+            correlation_key=correlation_key,
+            item_id=item_id,
+            method=method,
+        )
+        text = self._reasoning_text(
+            summary=summary,
+            headline=headline,
+            details=details,
+            method=method,
+        )
+        in_progress = self._is_active_state(state=state)
+        is_delta = self._is_reasoning_delta_method(method=method)
+        is_done = self._is_reasoning_done_method(method=method)
+
+        reasoning_element: Element | None = None
+        if reasoning_key is not None:
+            reasoning_element = self._active_reasoning_by_key.get(reasoning_key)
+
+        if reasoning_element is None and (text != "" or in_progress):
+            reasoning_element = messages.append_child(
+                tag_name="reasoning",
+                attributes={
+                    "summary": text if text != "" else "",
+                    "created_at": now,
+                },
+            )
+
+        if reasoning_element is not None and text != "":
+            if is_delta:
+                prior = reasoning_element.get_attribute("summary")
+                if not isinstance(prior, str):
+                    prior = ""
+                if not prior.endswith(text):
+                    reasoning_element.set_attribute("summary", f"{prior}{text}")
+            else:
+                reasoning_element.set_attribute("summary", text)
+
+        if reasoning_key is not None:
+            if in_progress and reasoning_element is not None:
+                self._active_reasoning_by_key[reasoning_key] = reasoning_element
+            elif state in ("completed", "failed", "cancelled") or is_done:
+                self._active_reasoning_by_key.pop(reasoning_key, None)
+
+        for key in drop_correlation_keys:
+            self._active_reasoning_by_key.pop(key, None)
 
     async def handle_custom_event(
         self,
@@ -113,6 +236,22 @@ class CodexThreadAdapter(ThreadAdapter):
         item_type = event.get("item_type")
         if not isinstance(item_type, str):
             item_type = ""
+
+        if kind == "reasoning":
+            self._upsert_reasoning(
+                messages=messages,
+                state=state,
+                method=method,
+                summary=summary,
+                headline=headline,
+                details=details,
+                item_id=item_id,
+                correlation_key=correlation_key,
+                drop_correlation_keys=drop_correlation_keys,
+            )
+            for key in drop_correlation_keys:
+                self._active_events_by_key.pop(key, None)
+            return
 
         if kind not in self._persisted_kinds:
             for key in drop_correlation_keys:
