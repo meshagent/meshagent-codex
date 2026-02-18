@@ -6,7 +6,11 @@ import uuid
 import pytest
 from meshagent.agents.context import AgentChatContext
 
-from meshagent.codex.app_server import _CodexAppServerBackend
+from meshagent.codex.app_server import (
+    CodexAppServerError,
+    _CodexAppServerBackend,
+    _CodexJsonRpcSession,
+)
 from meshagent.codex.thread_adapter import CodexThreadAdapter
 
 
@@ -261,3 +265,21 @@ async def test_codex_next_live_delta_build_matches_done_output() -> None:
     assert done_events
     assert streamed_text == done_events[-1]
     assert result == done_events[-1]
+
+
+@pytest.mark.asyncio
+async def test_session_start_reports_missing_executable_details(monkeypatch) -> None:
+    async def _raise_file_not_found(*args, **kwargs):
+        del args, kwargs
+        raise FileNotFoundError(2, "No such file or directory", "codex")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _raise_file_not_found)
+
+    session = _CodexJsonRpcSession(command="codex app-server", env={"PATH": ""})
+    with pytest.raises(CodexAppServerError) as exc_info:
+        await session.start()
+
+    message = str(exc_info.value)
+    assert "unable to launch codex app-server with command: codex app-server" in message
+    assert "missing_path=codex" in message
+    assert "executable 'codex' not found on PATH" in message

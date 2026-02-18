@@ -3,6 +3,7 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import shlex
 import sys
 from collections import deque
@@ -377,8 +378,28 @@ class _CodexJsonRpcSession:
                         stderr=asyncio.subprocess.PIPE,
                     )
                 except FileNotFoundError as exc:
+                    error_details: list[str] = []
+                    missing_path = exc.filename
+                    if isinstance(missing_path, str) and missing_path.strip() != "":
+                        error_details.append(f"missing_path={missing_path}")
+
+                    executable = argv[0]
+                    search_path = os.environ.get("PATH")
+                    if self._env is not None:
+                        search_path = self._env.get("PATH", search_path)
+                    resolved_executable = shutil.which(executable, path=search_path)
+                    if resolved_executable is None:
+                        error_details.append(
+                            f"executable '{executable}' not found on PATH"
+                        )
+
+                    details = ""
+                    if len(error_details) > 0:
+                        details = f" ({'; '.join(error_details)})"
+
                     raise CodexAppServerError(
-                        f"unable to launch codex app-server with command: {self._command}"
+                        "unable to launch codex app-server with command: "
+                        f"{self._command}{details}"
                     ) from exc
 
                 self._reader_task = asyncio.create_task(self._read_stdout())
