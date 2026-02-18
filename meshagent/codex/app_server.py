@@ -187,6 +187,25 @@ class _CodexJsonRpcSession:
         self._start_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
 
+    def _subprocess_search_path(self) -> Optional[str]:
+        if self._env is not None:
+            return self._env.get("PATH")
+        return os.environ.get("PATH")
+
+    def _resolve_subprocess_argv(
+        self,
+        *,
+        argv: list[str],
+    ) -> tuple[list[str], Optional[str]]:
+        executable = argv[0]
+        resolved_executable = shutil.which(
+            executable, path=self._subprocess_search_path()
+        )
+        if resolved_executable is None:
+            return argv, None
+
+        return [resolved_executable, *argv[1:]], resolved_executable
+
     def _redact_rpc_value(self, value: Any) -> Any:
         if isinstance(value, dict):
             redacted: dict[str, Any] = {}
@@ -368,9 +387,12 @@ class _CodexJsonRpcSession:
                 if len(argv) == 0:
                     raise CodexAppServerError("codex command was empty")
 
+                launch_argv, resolved_executable = self._resolve_subprocess_argv(
+                    argv=argv
+                )
                 try:
                     self._process = await asyncio.create_subprocess_exec(
-                        *argv,
+                        *launch_argv,
                         cwd=self._cwd,
                         env=self._env,
                         stdin=asyncio.subprocess.PIPE,
@@ -384,10 +406,6 @@ class _CodexJsonRpcSession:
                         error_details.append(f"missing_path={missing_path}")
 
                     executable = argv[0]
-                    search_path = os.environ.get("PATH")
-                    if self._env is not None:
-                        search_path = self._env.get("PATH", search_path)
-                    resolved_executable = shutil.which(executable, path=search_path)
                     if resolved_executable is None:
                         error_details.append(
                             f"executable '{executable}' not found on PATH"
@@ -1033,6 +1051,9 @@ class _CodexAppServerBackend:
 
         self._router_error = None
         await self._session.close()
+
+    async def ensure_ready(self, *, room: Optional[RoomClient]) -> None:
+        await self._ensure_router_started(room=room)
 
     def _extract_thread_id(self, result: Any) -> str:
         thread_id = None

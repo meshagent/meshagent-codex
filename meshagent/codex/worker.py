@@ -5,7 +5,7 @@ from typing import Optional
 
 from meshagent.agents import AgentChatContext, LLMAdapter
 from meshagent.agents.worker import Worker
-from meshagent.api import Requirement
+from meshagent.api import Requirement, RoomClient
 from meshagent.api.specs.service import ContainerMountSpec
 from meshagent.tools import Toolkit
 
@@ -97,6 +97,14 @@ class CodexWorker(Worker):
 
     def default_model(self) -> str:
         return self._model
+
+    async def preflight_start(self, *, room: RoomClient) -> None:
+        try:
+            await self._codex_backend.ensure_ready(room=room)
+        except Exception:
+            with contextlib.suppress(Exception):
+                await self._codex_backend.close()
+            raise
 
     async def process_message(
         self,

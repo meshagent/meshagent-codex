@@ -267,6 +267,23 @@ async def test_codex_next_live_delta_build_matches_done_output() -> None:
     assert result == done_events[-1]
 
 
+def test_resolve_subprocess_argv_prefers_absolute_executable(monkeypatch) -> None:
+    session = _CodexJsonRpcSession(command="codex app-server", env={"PATH": "/tmp/bin"})
+
+    def _which(executable: str, *, path: str | None = None):
+        assert executable == "codex"
+        assert path == "/tmp/bin"
+        return "/tmp/bin/codex"
+
+    monkeypatch.setattr(shutil, "which", _which)
+
+    launch_argv, resolved_executable = session._resolve_subprocess_argv(
+        argv=["codex", "app-server"]
+    )
+    assert launch_argv == ["/tmp/bin/codex", "app-server"]
+    assert resolved_executable == "/tmp/bin/codex"
+
+
 @pytest.mark.asyncio
 async def test_session_start_reports_missing_executable_details(monkeypatch) -> None:
     async def _raise_file_not_found(*args, **kwargs):
