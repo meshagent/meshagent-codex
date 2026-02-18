@@ -949,11 +949,8 @@ class _CodexAppServerBackend:
     ):
         if ws_url is None and command is None:
             if image is not None:
-                command = (
-                    "codex app-server "
-                    "-c model_providers.openai.name='OpenAI' "
-                    '-c model_providers.openai.base_url="$OPENAI_BASE_URL"'
-                )
+                command = "bash -lc 'codex app-server -c model_providers.openai.name='OpenAI' -c model_providers.openai.base_url=$OPENAI_BASE_URL'"
+
             else:
                 command = "codex app-server"
         elif ws_url is not None:
