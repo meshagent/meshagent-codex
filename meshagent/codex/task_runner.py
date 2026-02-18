@@ -92,7 +92,7 @@ class CodexTaskRunner(TaskRunner):
 
         if input_schema is None:
             input_schema = prompt_schema(description="use a prompt to generate content")
-            input_schema["properties"]["model"] = {"type": ["string", "null"]}
+
             if self.threading_mode == "manual":
                 input_schema = merge(
                     schema=input_schema,
