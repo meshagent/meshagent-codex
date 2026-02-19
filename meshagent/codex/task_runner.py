@@ -4,16 +4,19 @@ import contextlib
 import io
 import logging
 import mimetypes
-import posixpath
-import re
 import tarfile
-from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Optional
 
-from meshagent.agents import AgentChatContext, LLMAdapter, TaskContext, TaskRunner
+from meshagent.agents import (
+    AgentChatContext,
+    LLMAdapter,
+    TaskContext,
+    ThreadedTaskRunner,
+)
+from meshagent.agents.threaded_task_runner import ThreadingMode
 from meshagent.api import Requirement
 from meshagent.api.specs.service import ContainerMountSpec
-from meshagent.api.schema_util import merge, prompt_schema
+from meshagent.api.schema_util import prompt_schema
 from meshagent.tools import Toolkit
 
 from .app_server import _CodexAppServerBackend
@@ -21,17 +24,8 @@ from .thread_adapter import CodexThreadAdapter
 
 logger = logging.getLogger("codex.taskrunner")
 
-ThreadingMode = Literal["auto", "manual", "none"]
 
-DEFAULT_THREAD_NAME_RULES = [
-    "generate a concise topic name for storing this task in a thread",
-    "return only a thread_name value suitable for a file name",
-    "thread_name should be 2-6 words, lowercase, and topic-focused",
-    "do not include slashes or a .thread extension",
-]
-
-
-class CodexTaskRunner(TaskRunner):
+class CodexTaskRunner(ThreadedTaskRunner):
     """
     A TaskRunner that uses Codex app-server.
 
@@ -70,34 +64,17 @@ class CodexTaskRunner(TaskRunner):
         verbose: bool = False,
     ):
         self._model = model
-        if threading_mode is None:
-            resolved_threading_mode: ThreadingMode = (
-                "manual" if allow_thread_selection else "none"
-            )
-        else:
-            resolved_threading_mode = threading_mode
-
-        if resolved_threading_mode == "auto" and llm_adapter is None:
-            raise ValueError(
-                "`llm_adapter` is required when `threading_mode` is 'auto'"
-            )
-
-        self.threading_mode = resolved_threading_mode
-        self.thread_dir = thread_dir
-        if thread_name_rules is not None and len(thread_name_rules) > 0:
-            self.thread_name_rules = [*thread_name_rules]
-        else:
-            self.thread_name_rules = [*DEFAULT_THREAD_NAME_RULES]
-        self._thread_name_adapter = llm_adapter
+        resolved_threading_mode = self.resolve_threading_mode(
+            threading_mode=threading_mode,
+            input_path=allow_thread_selection,
+        )
 
         if input_schema is None:
             input_schema = prompt_schema(description="use a prompt to generate content")
-
-            if self.threading_mode == "manual":
-                input_schema = merge(
-                    schema=input_schema,
-                    additional_properties={"path": {"type": ["string", "null"]}},
-                )
+            input_schema = self.with_manual_thread_path_schema(
+                input_schema=input_schema,
+                threading_mode=resolved_threading_mode,
+            )
 
         static_toolkits = list(toolkits or [])
         super().__init__(
@@ -110,6 +87,12 @@ class CodexTaskRunner(TaskRunner):
             supports_tools=supports_tools,
             annotations=annotations,
             toolkits=static_toolkits,
+            input_path=allow_thread_selection,
+            threading_mode=threading_mode,
+            thread_dir=thread_dir,
+            thread_name_rules=thread_name_rules,
+            thread_name_adapter=llm_adapter,
+            thread_adapter_type=CodexThreadAdapter,
         )
 
         adapter_kwargs = {"model": model}
@@ -153,133 +136,6 @@ class CodexTaskRunner(TaskRunner):
 
     def default_model(self) -> str:
         return self._model
-
-    def _sanitize_thread_name(self, *, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized.endswith(".thread"):
-            normalized = normalized[: -len(".thread")]
-
-        normalized = re.sub(r"[^a-z0-9]+", "-", normalized)
-        normalized = re.sub(r"-{2,}", "-", normalized).strip("-")
-        if normalized == "":
-            normalized = "thread"
-        return normalized[:64].strip("-") or "thread"
-
-    def _fallback_thread_name(self, *, prompt: str) -> str:
-        del prompt
-        return f"thread-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
-
-    def _thread_path_for_name(self, *, thread_name: str) -> str:
-        return posixpath.join(self.thread_dir, f"{thread_name}.thread")
-
-    async def _generate_thread_path(
-        self,
-        *,
-        context: TaskContext,
-        prompt: str,
-        model: str,
-    ) -> str:
-        if self._thread_name_adapter is None:
-            raise RuntimeError(
-                "auto threading mode requires a configured llm adapter for thread naming"
-            )
-
-        cloned_context = context.chat.copy()
-        cloned_context.replace_rules(rules=self.thread_name_rules)
-        cloned_context.append_user_message(prompt)
-
-        generated_name = self._fallback_thread_name(prompt=prompt)
-        try:
-            response = await self._thread_name_adapter.next(
-                context=cloned_context,
-                room=context.room,
-                model=model,
-                on_behalf_of=context.on_behalf_of,
-                toolkits=[],
-                output_schema={
-                    "type": "object",
-                    "required": ["thread_name"],
-                    "additionalProperties": False,
-                    "properties": {
-                        "thread_name": {
-                            "type": "string",
-                            "description": "2-6 word topic name for the task thread",
-                        },
-                    },
-                },
-            )
-            if isinstance(response, dict):
-                thread_name = response.get("thread_name")
-                if isinstance(thread_name, str):
-                    generated_name = self._sanitize_thread_name(value=thread_name)
-        except Exception as ex:
-            logger.warning(
-                "unable to auto-generate thread name, using fallback",
-                exc_info=ex,
-            )
-
-        return self._thread_path_for_name(thread_name=generated_name)
-
-    async def resolve_thread_path(
-        self,
-        *,
-        context: TaskContext,
-        arguments: dict,
-        prompt: str,
-        model: str,
-    ) -> str | None:
-        if self.threading_mode == "none":
-            return None
-
-        if self.threading_mode == "manual":
-            path = arguments.get("path")
-            if path is None:
-                return None
-            if not isinstance(path, str):
-                raise ValueError("`path` must be a string or null")
-
-            selected_path = path.strip()
-            if selected_path == "":
-                return None
-            return selected_path
-
-        return await self._generate_thread_path(
-            context=context,
-            prompt=prompt,
-            model=model,
-        )
-
-    def _selected_thread_path(self, *, arguments: dict) -> str | None:
-        if self.threading_mode == "none":
-            return None
-
-        path = arguments.get("path")
-        if path is None:
-            return None
-        if not isinstance(path, str):
-            raise ValueError("`path` must be a string or null")
-
-        selected_path = path.strip()
-        if selected_path == "":
-            return None
-        return selected_path
-
-    def create_thread_adapter(
-        self,
-        *,
-        context: TaskContext,
-        arguments: dict,
-        attachment: Optional[bytes] = None,
-    ) -> CodexThreadAdapter | None:
-        del attachment
-        selected_path = self._selected_thread_path(arguments=arguments)
-        if selected_path is None:
-            return None
-
-        return CodexThreadAdapter(
-            room=context.room,
-            path=selected_path,
-        )
 
     async def get_rules(self, *, context: TaskContext) -> list[str]:
         rules = [*self._extra_rules]
