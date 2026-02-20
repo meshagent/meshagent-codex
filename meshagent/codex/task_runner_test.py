@@ -69,10 +69,31 @@ class _FakeBackend:
         )
         if event_handler is not None:
             self.used_event_handler = True
-            event_handler({"type": "response.content_part.added"})
-            event_handler({"type": "response.output_text.delta", "delta": "assistant "})
             event_handler(
-                {"type": "response.output_text.done", "text": "assistant response"}
+                {
+                    "method": "item/started",
+                    "params": {
+                        "item": {"id": "item-1", "type": "agent_message"},
+                    },
+                }
+            )
+            event_handler(
+                {
+                    "method": "item/agentmessage/delta",
+                    "params": {"delta": "assistant "},
+                }
+            )
+            event_handler(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "id": "item-1",
+                            "type": "agent_message",
+                            "text": "assistant response",
+                        }
+                    },
+                }
             )
         return "assistant response"
 
@@ -223,10 +244,10 @@ async def test_task_runner_manual_threading_uses_selected_thread_path(
     assert adapter.appended
     assert adapter.stopped
     assert adapter.writes == [("hello", "caller")]
-    assert [event["type"] for event in adapter.events] == [
-        "response.content_part.added",
-        "response.output_text.delta",
-        "response.output_text.done",
+    assert [event["method"] for event in adapter.events] == [
+        "item/started",
+        "item/agentmessage/delta",
+        "item/completed",
     ]
 
 
@@ -283,10 +304,10 @@ async def test_task_runner_auto_threading_generates_path(monkeypatch) -> None:
     assert adapter.appended
     assert adapter.stopped
     assert adapter.writes == [("Plan the Q1 release milestones", "caller")]
-    assert [event["type"] for event in adapter.events] == [
-        "response.content_part.added",
-        "response.output_text.delta",
-        "response.output_text.done",
+    assert [event["method"] for event in adapter.events] == [
+        "item/started",
+        "item/agentmessage/delta",
+        "item/completed",
     ]
 
 

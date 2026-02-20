@@ -1,9 +1,11 @@
+import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
-from meshagent.agents.thread_adapter import ThreadAdapter
-from meshagent.api import Element
-import logging
+from meshagent.agents.thread_adapter import ThreadAdapter, tracer
+from meshagent.api import Element, RoomException
 
 logger = logging.getLogger("codex.thread")
 
@@ -22,6 +24,222 @@ class CodexThreadAdapter(ThreadAdapter):
             "diff",
             "approval",
         }
+
+    async def stop(self) -> None:
+        await super().stop()
+        self._active_events_by_key.clear()
+        self._active_reasoning_by_key.clear()
+
+    def _append_assistant_message(self, *, messages: Element) -> Element:
+        return messages.append_child(
+            tag_name="message",
+            attributes={
+                "text": "",
+                "created_at": datetime.now(timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "author_name": self._room.local_participant.get_attribute("name"),
+            },
+        )
+
+    def _extract_item(self, *, event: dict) -> dict:
+        params = event.get("params")
+        if not isinstance(params, dict):
+            return {}
+        item = params.get("item")
+        if not isinstance(item, dict):
+            return {}
+        return item
+
+    def _item_type(self, *, item: dict) -> str:
+        item_type = item.get("type")
+        if not isinstance(item_type, str):
+            return ""
+        return item_type.strip().lower()
+
+    def _is_agent_message(self, *, item: dict) -> bool:
+        item_type = self._item_type(item=item)
+        return item_type in ("agentmessage", "agent_message")
+
+    def _to_text(self, *, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+
+        if isinstance(value, list):
+            parts: list[str] = []
+            for part in value:
+                if isinstance(part, str):
+                    parts.append(part)
+                    continue
+                if isinstance(part, dict):
+                    if isinstance(part.get("text"), str):
+                        parts.append(part["text"])
+                    elif isinstance(part.get("value"), str):
+                        parts.append(part["value"])
+            return "".join(parts)
+
+        if isinstance(value, dict):
+            if isinstance(value.get("text"), str):
+                return value["text"]
+            if isinstance(value.get("value"), str):
+                return value["value"]
+            nested = value.get("content")
+            if nested is not None:
+                return self._to_text(value=nested)
+
+        return ""
+
+    def _extract_item_text(self, *, item: dict) -> str:
+        for key in ("text", "content", "message"):
+            if key in item:
+                text = self._to_text(value=item.get(key))
+                if text != "":
+                    return text
+        return ""
+
+    def _extract_delta(self, *, event: dict) -> str:
+        params = event.get("params")
+        if not isinstance(params, dict):
+            return ""
+
+        delta = params.get("delta")
+        if isinstance(delta, str):
+            return delta
+
+        nested = params.get("item")
+        if isinstance(nested, dict):
+            nested_delta = nested.get("delta")
+            if isinstance(nested_delta, str):
+                return nested_delta
+            return self._extract_item_text(item=nested)
+
+        return ""
+
+    def _extract_task_complete_text(self, *, event: dict) -> str:
+        params = event.get("params")
+        if not isinstance(params, dict):
+            return ""
+
+        msg = params.get("msg")
+        if not isinstance(msg, dict):
+            return ""
+
+        last_agent_message = msg.get("last_agent_message")
+        if not isinstance(last_agent_message, dict):
+            return ""
+
+        return self._extract_item_text(item=last_agent_message)
+
+    async def _process_llm_events(self) -> None:
+        if self._thread is None:
+            raise RoomException("thread was not opened")
+
+        messages = self._thread.root.get_children_by_tag_name("messages")
+        if len(messages) == 0:
+            raise RoomException("messages element is missing from thread document")
+        doc_messages = messages[0]
+
+        updates: asyncio.Queue = asyncio.Queue()
+        content_element: Element | None = None
+        partial = ""
+
+        # Coalesce partial updates to reduce sync churn.
+        async def update_thread() -> None:
+            changes: dict[Element, str] = {}
+            try:
+                while True:
+                    try:
+                        element, partial_text = updates.get_nowait()
+                        changes[element] = partial_text
+                    except asyncio.QueueEmpty:
+                        for element, partial_text in changes.items():
+                            element["text"] = partial_text
+
+                        changes.clear()
+
+                        element, partial_text = await updates.get()
+                        changes[element] = partial_text
+            except asyncio.QueueShutDown:
+                for element, partial_text in changes.items():
+                    element["text"] = partial_text
+                changes.clear()
+
+        def finish_message(*, text: str) -> None:
+            nonlocal content_element, partial
+            if content_element is None:
+                content_element = self._append_assistant_message(messages=doc_messages)
+            updates.put_nowait((content_element, text))
+            content_element = None
+            partial = ""
+            with tracer.start_as_current_span("chatbot.thread.message") as span:
+                span.set_attribute(
+                    "from_participant_name",
+                    self._room.local_participant.get_attribute("name"),
+                )
+                span.set_attribute("role", "assistant")
+                span.set_attribute("text", text)
+
+        update_thread_task = asyncio.create_task(update_thread())
+        try:
+            while True:
+                evt = await self._llm_messages.get()
+                event_type = evt.get("type")
+                if event_type in ("agent.event", "codex.event"):
+                    await self.handle_custom_event(messages=doc_messages, event=evt)
+                    continue
+
+                method = evt.get("method")
+                if isinstance(method, str):
+                    method = method.strip().lower()
+
+                if method in ("item/started", "codex/event/item_started"):
+                    item = self._extract_item(event=evt)
+                    if self._is_agent_message(item=item):
+                        partial = ""
+                        content_element = self._append_assistant_message(
+                            messages=doc_messages
+                        )
+
+                elif method in (
+                    "item/agentmessage/delta",
+                    "item/agentmessage/content_delta",
+                    "item/agent_message/delta",
+                    "item/agent_message/content_delta",
+                    "codex/event/agent_message_delta",
+                    "codex/event/agent_message_content_delta",
+                ):
+                    delta = self._extract_delta(event=evt)
+                    if delta == "":
+                        continue
+                    partial += delta
+                    if content_element is None:
+                        content_element = self._append_assistant_message(
+                            messages=doc_messages
+                        )
+                    updates.put_nowait((content_element, partial))
+
+                elif method in ("item/completed", "codex/event/item_completed"):
+                    item = self._extract_item(event=evt)
+                    if not self._is_agent_message(item=item):
+                        continue
+                    text = self._extract_item_text(item=item)
+                    if text == "":
+                        text = partial
+                    finish_message(text=text)
+
+                elif method == "codex/event/task_complete":
+                    text = self._extract_task_complete_text(event=evt)
+                    if text != "":
+                        finish_message(text=text)
+
+                else:
+                    await self.handle_custom_event(messages=doc_messages, event=evt)
+        except asyncio.QueueShutDown:
+            pass
+        finally:
+            updates.shutdown()
+
+        await update_thread_task
 
     def _is_active_state(self, *, state: str) -> bool:
         normalized = state.strip().lower()

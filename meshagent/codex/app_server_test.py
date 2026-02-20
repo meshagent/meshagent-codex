@@ -81,6 +81,70 @@ def _notification(
     return {"method": method, "params": params}
 
 
+def _streamed_text_from_events(events: list[dict]) -> str:
+    parts: list[str] = []
+    for event in events:
+        method = event.get("method")
+        if not isinstance(method, str):
+            continue
+
+        method = method.lower()
+        if method not in (
+            "item/agentmessage/delta",
+            "item/agentmessage/content_delta",
+            "item/agent_message/delta",
+            "item/agent_message/content_delta",
+            "codex/event/agent_message_delta",
+            "codex/event/agent_message_content_delta",
+        ):
+            continue
+
+        params = event.get("params")
+        if not isinstance(params, dict):
+            continue
+
+        delta = params.get("delta")
+        if isinstance(delta, str):
+            parts.append(delta)
+
+    return "".join(parts)
+
+
+def _completed_texts_from_events(events: list[dict]) -> list[str]:
+    texts: list[str] = []
+
+    for event in events:
+        method = event.get("method")
+        if not isinstance(method, str):
+            continue
+
+        method = method.lower()
+        params = event.get("params")
+        if not isinstance(params, dict):
+            continue
+
+        if method in ("item/completed", "codex/event/item_completed"):
+            item = params.get("item")
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    texts.append(text)
+            continue
+
+        if method == "codex/event/task_complete":
+            msg = params.get("msg")
+            if not isinstance(msg, dict):
+                continue
+            last_message = msg.get("last_agent_message")
+            if not isinstance(last_message, dict):
+                continue
+            text = last_message.get("text")
+            if isinstance(text, str):
+                texts.append(text)
+
+    return texts
+
+
 @pytest.mark.asyncio
 async def test_codex_next_streamed_delta_text_matches_final_message() -> None:
     thread_id = "thread-1"
@@ -152,16 +216,8 @@ async def test_codex_next_streamed_delta_text_matches_final_message() -> None:
     finally:
         await backend.close()
 
-    streamed_text = "".join(
-        event.get("delta", "")
-        for event in emitted_events
-        if event.get("type") == "response.output_text.delta"
-    )
-    done_events = [
-        event.get("text", "")
-        for event in emitted_events
-        if event.get("type") == "response.output_text.done"
-    ]
+    streamed_text = _streamed_text_from_events(emitted_events)
+    done_events = _completed_texts_from_events(emitted_events)
 
     assert result == final_text
     assert streamed_text == final_text
@@ -250,16 +306,8 @@ async def test_codex_next_live_delta_build_matches_done_output() -> None:
         finally:
             await backend.close()
 
-    streamed_text = "".join(
-        event.get("delta", "")
-        for event in emitted_events
-        if event.get("type") == "response.output_text.delta"
-    )
-    done_events = [
-        event.get("text", "")
-        for event in emitted_events
-        if event.get("type") == "response.output_text.done"
-    ]
+    streamed_text = _streamed_text_from_events(emitted_events)
+    done_events = _completed_texts_from_events(emitted_events)
 
     assert streamed_text != ""
     assert done_events

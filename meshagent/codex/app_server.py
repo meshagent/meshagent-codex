@@ -2716,7 +2716,12 @@ class _CodexAppServerBackend:
                     if _is_agent_message(item) and not output_started:
                         output_started = True
                         if event_handler is not None:
-                            event_handler({"type": "response.content_part.added"})
+                            event_handler(
+                                {
+                                    "method": method,
+                                    "params": params,
+                                }
+                            )
 
                 elif method_lower in (
                     "item/agentmessage/delta",
@@ -2738,15 +2743,13 @@ class _CodexAppServerBackend:
                     if delta != "":
                         if not output_started:
                             output_started = True
-                            if event_handler is not None:
-                                event_handler({"type": "response.content_part.added"})
 
                         final_text += delta
                         if event_handler is not None:
                             event_handler(
                                 {
-                                    "type": "response.output_text.delta",
-                                    "delta": delta,
+                                    "method": method,
+                                    "params": params,
                                 }
                             )
 
@@ -2760,8 +2763,8 @@ class _CodexAppServerBackend:
                         if event_handler is not None:
                             event_handler(
                                 {
-                                    "type": "response.output_text.done",
-                                    "text": final_text,
+                                    "method": method,
+                                    "params": params,
                                 }
                             )
                             output_done = True
@@ -2779,8 +2782,8 @@ class _CodexAppServerBackend:
                         if event_handler is not None and not output_done:
                             event_handler(
                                 {
-                                    "type": "response.output_text.done",
-                                    "text": final_text,
+                                    "method": method,
+                                    "params": params,
                                 }
                             )
                             output_done = True
