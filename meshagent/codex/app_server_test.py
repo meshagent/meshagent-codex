@@ -32,6 +32,8 @@ class _FakeSession:
         self._requests.append((method, params))
         if method == "turn/start":
             return {"turn": {"id": "turn-1"}}
+        if method == "turn/steer":
+            return {"turnId": params.get("expectedTurnId")}
         raise AssertionError(f"unexpected request: {method}")
 
     async def next_notification(self) -> dict:
@@ -313,6 +315,51 @@ async def test_codex_next_live_delta_build_matches_done_output() -> None:
     assert done_events
     assert streamed_text == done_events[-1]
     assert result == done_events[-1]
+
+
+@pytest.mark.asyncio
+async def test_codex_steer_sends_turn_steer_for_active_turn() -> None:
+    backend = _CodexAppServerBackend()
+    fake_session = _FakeSession(notifications=[])
+    backend._session = fake_session
+
+    context = AgentChatContext()
+    await backend._set_thread_state(
+        thread_key="thread:test",
+        thread_id="thread-1",
+        context=context,
+    )
+    await backend._track_active_turn(
+        thread_key="thread:test",
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    await backend.steer(thread_key="thread:test", message="keep going")
+
+    assert fake_session._requests[-1][0] == "turn/steer"
+    assert fake_session._requests[-1][1] == {
+        "threadId": "thread-1",
+        "expectedTurnId": "turn-1",
+        "input": [{"type": "text", "text": "keep going"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_codex_steer_fails_when_no_active_turn() -> None:
+    backend = _CodexAppServerBackend()
+    fake_session = _FakeSession(notifications=[])
+    backend._session = fake_session
+
+    context = AgentChatContext()
+    await backend._set_thread_state(
+        thread_key="thread:test",
+        thread_id="thread-1",
+        context=context,
+    )
+
+    with pytest.raises(CodexAppServerError, match="has no active turn to steer"):
+        await backend.steer(thread_key="thread:test", message="nudge")
 
 
 def test_resolve_subprocess_argv_prefers_absolute_executable(monkeypatch) -> None:

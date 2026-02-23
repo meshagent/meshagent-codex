@@ -1312,6 +1312,46 @@ class _CodexAppServerBackend:
         await self.on_thread_cancel(thread_key=thread_key)
         await self._clear_thread_state(thread_key=thread_key)
 
+    async def _active_turn_id_for_thread(
+        self, *, thread_key: str, thread_id: str
+    ) -> Optional[str]:
+        async with self._active_turns_lock:
+            active_turns = self._active_turns.get(thread_key)
+            if active_turns is None or len(active_turns) == 0:
+                return None
+
+            for candidate_thread_id, turn_id in active_turns:
+                if candidate_thread_id == thread_id:
+                    return turn_id
+            return None
+
+    async def steer(self, *, thread_key: str, message: str | list[dict]) -> None:
+        turn_input = self._normalize_turn_input(message=message)
+
+        thread_state = await self._get_thread_state(thread_key=thread_key)
+        if thread_state is None:
+            raise CodexAppServerError(
+                f"codex thread was not opened for thread key '{thread_key}'"
+            )
+        thread_id = thread_state.thread_id
+
+        active_turn_id = await self._active_turn_id_for_thread(
+            thread_key=thread_key, thread_id=thread_id
+        )
+        if active_turn_id is None:
+            raise CodexAppServerError(
+                f"codex thread '{thread_key}' has no active turn to steer"
+            )
+
+        await self._session.request(
+            method="turn/steer",
+            params={
+                "threadId": thread_id,
+                "expectedTurnId": active_turn_id,
+                "input": turn_input,
+            },
+        )
+
     async def _track_active_turn(
         self,
         *,

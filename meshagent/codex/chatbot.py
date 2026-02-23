@@ -13,7 +13,7 @@ from meshagent.agents.chat import (
     ChatThreadContext,
 )
 from meshagent.agents.thread_adapter import ThreadAdapter
-from meshagent.api import MeshDocument, Requirement
+from meshagent.api import MeshDocument, Requirement, RoomException
 from meshagent.api import RemoteParticipant
 from meshagent.api.specs.service import ContainerMountSpec
 from meshagent.tools import Toolkit, make_toolkits
@@ -198,14 +198,19 @@ class CodexChatBot(ChatBotBase):
             self._set_thread_status_nowait(path=path, status=text)
             return
 
+        # Keep a cancellable in-progress status visible for the whole turn.
+        # Per-item completion events are noisy and should not clear thread status.
+        fallback_status = "Thinking"
+
         if key is not None:
             tracked = self._thread_status_keys.get(path)
             if tracked is not None and tracked == key:
-                self._clear_thread_status_nowait(path=path)
+                self._thread_status_keys.pop(path, None)
+                self._set_thread_status_nowait(path=path, status=fallback_status)
             return
 
         if state in ("completed", "failed", "cancelled"):
-            self._clear_thread_status_nowait(path=path)
+            self._set_thread_status_nowait(path=path, status=fallback_status)
 
     def _approval_key(self, *, thread_key: str, approval_id: str) -> str:
         return f"{thread_key}:{approval_id}"
@@ -518,6 +523,19 @@ class CodexChatBot(ChatBotBase):
         await self._cancel_all_pending_approvals(thread_key=thread_context.path)
         await self._codex_backend.on_thread_close(thread_key=thread_context.path)
 
+    def processing_thread_status_mode(
+        self, *, path: str, thread_context: Optional[ChatThreadContext]
+    ) -> str:
+        del path
+        del thread_context
+        return "steerable"
+
+    async def cancel_thread_task(
+        self, *, path: str, thread_context: Optional[ChatThreadContext]
+    ) -> None:
+        del path
+        del thread_context
+
     async def on_approved(
         self,
         *,
@@ -570,21 +588,30 @@ class CodexChatBot(ChatBotBase):
                 thread_context.path,
             )
 
-    async def on_chat_received(
+    def _append_user_message_to_context(
         self,
         *,
         thread_context: ChatThreadContext,
         from_participant: RemoteParticipant,
-        message: dict,
-    ) -> Optional[str]:
-        rules = await self.get_rules(
-            thread_context=thread_context,
-            participant=from_participant,
+        text: str,
+    ) -> None:
+        iso_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        formatted_message = self.format_message(
+            user_name=from_participant.get_attribute("name"),
+            message=text,
+            iso_timestamp=iso_timestamp,
         )
-        thread_context.chat.replace_rules(rules)
+        thread_context.chat.append_user_message(message=formatted_message)
 
-        text = message["text"]
-        turn_input = [{"type": "text", "text": text}]
+    async def _message_to_turn_input(
+        self, *, thread_context: ChatThreadContext, message: dict
+    ) -> list[dict]:
+        text = message.get("text")
+        if not isinstance(text, str):
+            text = ""
+        turn_input = []
+        if text.strip() != "":
+            turn_input.append({"type": "text", "text": text})
 
         attachments = message.get("attachments", [])
         if not isinstance(attachments, list):
@@ -657,13 +684,58 @@ class CodexChatBot(ChatBotBase):
                 }
             )
 
-        iso_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        formatted_message = self.format_message(
-            user_name=from_participant.get_attribute("name"),
-            message=text,
-            iso_timestamp=iso_timestamp,
+        if len(turn_input) == 0:
+            raise RoomException("steering message cannot be empty")
+
+        return turn_input
+
+    async def on_thread_steer(
+        self,
+        *,
+        thread_context: ChatThreadContext,
+        from_participant: RemoteParticipant,
+        message: dict,
+    ) -> None:
+        turn_input = await self._message_to_turn_input(
+            thread_context=thread_context,
+            message=message,
         )
-        thread_context.chat.append_user_message(message=formatted_message)
+        text = message.get("text")
+        if not isinstance(text, str):
+            text = ""
+        self._append_user_message_to_context(
+            thread_context=thread_context,
+            from_participant=from_participant,
+            text=text,
+        )
+        await self._codex_backend.steer(
+            thread_key=thread_context.path,
+            message=turn_input,
+        )
+
+    async def on_chat_received(
+        self,
+        *,
+        thread_context: ChatThreadContext,
+        from_participant: RemoteParticipant,
+        message: dict,
+    ) -> Optional[str]:
+        rules = await self.get_rules(
+            thread_context=thread_context,
+            participant=from_participant,
+        )
+        thread_context.chat.replace_rules(rules)
+
+        text = message["text"]
+        turn_input = await self._message_to_turn_input(
+            thread_context=thread_context,
+            message=message,
+        )
+        self._append_user_message_to_context(
+            thread_context=thread_context,
+            from_participant=from_participant,
+            text=text,
+        )
 
         model = message.get("model")
         if not isinstance(model, str) or model.strip() == "":
