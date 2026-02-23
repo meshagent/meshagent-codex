@@ -13,7 +13,6 @@ from meshagent.agents.chat import (
     ChatThreadContext,
 )
 from meshagent.agents.thread_adapter import ThreadAdapter
-from meshagent.api.chan import ChanClosed
 from meshagent.api import MeshDocument, Requirement
 from meshagent.api import RemoteParticipant
 from meshagent.api.specs.service import ContainerMountSpec
@@ -34,7 +33,7 @@ class CodexChatBot(ChatBotBase):
     - `chat`
     - `clear`
     - `cancel`
-    - typing/listening/thinking signals
+    - typing/listening signals and per-thread status attributes
     """
 
     def __init__(
@@ -86,9 +85,6 @@ class CodexChatBot(ChatBotBase):
         self._pending_approvals_lock = asyncio.Lock()
         self._pending_approvals: dict[str, asyncio.Future[str]] = {}
         self._pending_approval_keys_by_thread: dict[str, set[str]] = {}
-        self._thread_status_values: dict[str, str] = {}
-        self._thread_status_keys: dict[str, str] = {}
-        self._thread_status_locks: dict[str, asyncio.Lock] = {}
         adapter_kwargs["approval_request_handler"] = self._on_approval_requested
 
         self._codex_backend = _CodexAppServerBackend(**adapter_kwargs)
@@ -133,75 +129,6 @@ class CodexChatBot(ChatBotBase):
             event_handler=event_handler,
             chat=context,
         )
-
-    def _thread_status_attribute_name(self, *, path: str) -> str:
-        return f"thread.status.{path}"
-
-    def _status_lock(self, *, path: str) -> asyncio.Lock:
-        lock = self._thread_status_locks.get(path)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._thread_status_locks[path] = lock
-        return lock
-
-    async def _set_thread_status(self, *, path: str, status: Optional[str]) -> None:
-        if self._room is None or self._room.local_participant is None:
-            return
-
-        async def set_local_attribute(
-            attribute_name: str, value: Optional[str]
-        ) -> None:
-            try:
-                await self._room.local_participant.set_attribute(attribute_name, value)
-            except ChanClosed:
-                # Expected during shutdown/disconnect while clearing per-thread status.
-                logger.debug(
-                    "room channel closed while setting thread status '%s'",
-                    attribute_name,
-                )
-
-        attribute_name = self._thread_status_attribute_name(path=path)
-        if status is None:
-            self._thread_status_values.pop(path, None)
-            await set_local_attribute(attribute_name, None)
-            return
-
-        normalized = status.strip()
-        if normalized == "":
-            self._thread_status_values.pop(path, None)
-            await set_local_attribute(attribute_name, None)
-            return
-
-        if self._thread_status_values.get(path) == normalized:
-            return
-
-        self._thread_status_values[path] = normalized
-        await set_local_attribute(attribute_name, normalized)
-
-    async def _apply_thread_status(
-        self,
-        *,
-        path: str,
-        status: Optional[str],
-    ) -> None:
-        lock = self._status_lock(path=path)
-        async with lock:
-            await self._set_thread_status(path=path, status=status)
-
-    def _set_thread_status_nowait(self, *, path: str, status: Optional[str]) -> None:
-        async def run() -> None:
-            try:
-                await self._apply_thread_status(
-                    path=path,
-                    status=status,
-                )
-            except Exception as ex:
-                logger.error(
-                    f"unable to set thread status for {path}",
-                    exc_info=ex,
-                )
-
-        asyncio.create_task(run())
 
     def _status_event_details(
         self, *, event: dict
@@ -279,25 +206,6 @@ class CodexChatBot(ChatBotBase):
 
         if state in ("completed", "failed", "cancelled"):
             self._clear_thread_status_nowait(path=path)
-
-    async def _clear_thread_status(self, *, path: str) -> None:
-        self._thread_status_keys.pop(path, None)
-        await self._apply_thread_status(path=path, status=None)
-
-    def _clear_thread_status_nowait(self, *, path: str) -> None:
-        self._thread_status_keys.pop(path, None)
-        self._set_thread_status_nowait(path=path, status=None)
-
-    async def _clear_all_thread_statuses(self) -> None:
-        paths = {
-            *self._thread_status_values.keys(),
-            *self._thread_status_keys.keys(),
-        }
-        for path in paths:
-            await self._set_thread_status(path=path, status=None)
-        self._thread_status_keys.clear()
-        self._thread_status_values.clear()
-        self._thread_status_locks.clear()
 
     def _approval_key(self, *, thread_key: str, approval_id: str) -> str:
         return f"{thread_key}:{approval_id}"
@@ -583,7 +491,7 @@ class CodexChatBot(ChatBotBase):
                 )
 
     async def on_thread_open(self, *, thread_context: ChatThreadContext):
-        await self._clear_thread_status(path=thread_context.path)
+        await self.clear_thread_status(path=thread_context.path)
         await self._codex_backend.on_thread_open(
             thread_key=thread_context.path,
             room=self._room,
@@ -593,7 +501,7 @@ class CodexChatBot(ChatBotBase):
         )
 
     async def on_thread_clear(self, *, thread_context: ChatThreadContext):
-        await self._clear_thread_status(path=thread_context.path)
+        await self.clear_thread_status(path=thread_context.path)
         await self._cancel_all_pending_approvals(thread_key=thread_context.path)
         await self._codex_backend.on_thread_clear(
             thread_key=thread_context.path,
@@ -601,12 +509,12 @@ class CodexChatBot(ChatBotBase):
         )
 
     async def on_thread_cancel(self, *, thread_context: ChatThreadContext):
-        await self._clear_thread_status(path=thread_context.path)
+        await self.clear_thread_status(path=thread_context.path)
         await self._cancel_all_pending_approvals(thread_key=thread_context.path)
         await self._codex_backend.on_thread_cancel(thread_key=thread_context.path)
 
     async def on_thread_close(self, *, thread_context: ChatThreadContext):
-        await self._clear_thread_status(path=thread_context.path)
+        await self.clear_thread_status(path=thread_context.path)
         await self._cancel_all_pending_approvals(thread_key=thread_context.path)
         await self._codex_backend.on_thread_close(thread_key=thread_context.path)
 
@@ -787,20 +695,16 @@ class CodexChatBot(ChatBotBase):
             skill_dirs=self._skill_dirs,
         )
 
-        await self._clear_thread_status(path=thread_context.path)
-        try:
-            return await self._codex_backend.next(
-                thread_key=thread_context.path,
-                message=turn_input,
-                developer_instructions=rules,
-                room=self._room,
-                toolkits=message_toolkits,
-                event_handler=thread_context.emit,
-                model=model,
-                on_behalf_of=from_participant,
-            )
-        finally:
-            await self._clear_thread_status(path=thread_context.path)
+        return await self._codex_backend.next(
+            thread_key=thread_context.path,
+            message=turn_input,
+            developer_instructions=rules,
+            room=self._room,
+            toolkits=message_toolkits,
+            event_handler=thread_context.emit,
+            model=model,
+            on_behalf_of=from_participant,
+        )
 
     async def stop(self):
         await super().stop()
