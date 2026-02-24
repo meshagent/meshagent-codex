@@ -4,6 +4,7 @@ import pytest
 from meshagent.agents.adapter import LLMAdapter
 from meshagent.agents.context import AgentSessionContext
 from meshagent.agents.task_runner import TaskContext
+from typing import Optional
 
 import meshagent.codex.task_runner as task_runner_module
 from meshagent.codex.task_runner import CodexTaskRunner
@@ -119,6 +120,7 @@ class _FakeLLMAdapter(LLMAdapter):
         event_handler=None,
         model=None,
         on_behalf_of=None,
+        options: Optional[dict] = None,
     ):
         del event_handler
         self.calls.append(

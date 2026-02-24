@@ -31,6 +31,7 @@ class _CodexWorkerAdapter(LLMAdapter):
         event_handler=None,
         model=None,
         on_behalf_of=None,
+        options: Optional[dict] = None,
     ):
         del context
         del room
