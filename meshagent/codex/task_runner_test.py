@@ -219,7 +219,7 @@ async def test_task_runner_manual_threading_uses_selected_thread_path(
     room = _FakeRoom()
     caller = _FakeParticipant(name="caller", participant_id="caller-id")
     context = TaskContext(
-        chat=AgentSessionContext(system_role=None),
+        session=AgentSessionContext(system_role=None),
         room=room,
         caller=caller,
         on_behalf_of=None,
@@ -273,7 +273,7 @@ async def test_task_runner_auto_threading_generates_path(monkeypatch) -> None:
     room = _FakeRoom()
     caller = _FakeParticipant(name="caller", participant_id="caller-id")
     context = TaskContext(
-        chat=AgentSessionContext(system_role=None),
+        session=AgentSessionContext(system_role=None),
         room=room,
         caller=caller,
         on_behalf_of=None,
@@ -334,7 +334,7 @@ async def test_task_runner_auto_threading_uses_custom_name_rules(monkeypatch) ->
     room = _FakeRoom()
     caller = _FakeParticipant(name="caller", participant_id="caller-id")
     context = TaskContext(
-        chat=AgentSessionContext(system_role=None),
+        session=AgentSessionContext(system_role=None),
         room=room,
         caller=caller,
         on_behalf_of=None,

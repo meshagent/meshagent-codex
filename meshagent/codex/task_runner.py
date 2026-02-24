@@ -178,7 +178,7 @@ class CodexTaskRunner(ThreadedTaskRunner):
             }
 
         selected_path = self._selected_thread_path(arguments=adapter_arguments)
-        thread_key = selected_path if selected_path is not None else context.chat.id
+        thread_key = selected_path if selected_path is not None else context.session.id
 
         thread_adapter = self.create_thread_adapter(
             context=context,
@@ -187,7 +187,7 @@ class CodexTaskRunner(ThreadedTaskRunner):
         )
         if thread_adapter is not None:
             await thread_adapter.start()
-            thread_adapter.append_messages(context=context.chat)
+            thread_adapter.append_messages(context=context.session)
             thread_adapter.write_text_message(
                 text=prompt,
                 participant=context.caller if context.caller is not None else "user",
@@ -198,8 +198,8 @@ class CodexTaskRunner(ThreadedTaskRunner):
                 thread_adapter.push(event=event)
 
         rules = await self.get_rules(context=context)
-        context.chat.append_rules(rules)
-        context.chat.append_user_message(prompt)
+        context.session.append_rules(rules)
+        context.session.append_user_message(prompt)
 
         turn_input: list[dict] = [{"type": "text", "text": prompt}]
         non_image_file_notes: list[str] = []
@@ -255,7 +255,7 @@ class CodexTaskRunner(ThreadedTaskRunner):
             await self._codex_backend.on_thread_open(
                 thread_key=thread_key,
                 room=context.room,
-                context=context.chat,
+                context=context.session,
                 model=model,
                 skill_dirs=self._skill_dirs,
             )

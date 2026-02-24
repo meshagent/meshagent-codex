@@ -127,7 +127,7 @@ class CodexChatBot(ChatBotBase):
             thread=thread,
             participants=participants,
             event_handler=event_handler,
-            chat=context,
+            session=context,
         )
 
     def _status_event_details(
@@ -500,7 +500,7 @@ class CodexChatBot(ChatBotBase):
         await self._codex_backend.on_thread_open(
             thread_key=thread_context.path,
             room=self._room,
-            context=thread_context.chat,
+            context=thread_context.session,
             model=self._model,
             skill_dirs=self._skill_dirs,
         )
@@ -510,7 +510,7 @@ class CodexChatBot(ChatBotBase):
         await self._cancel_all_pending_approvals(thread_key=thread_context.path)
         await self._codex_backend.on_thread_clear(
             thread_key=thread_context.path,
-            context=thread_context.chat,
+            context=thread_context.session,
         )
 
     async def on_thread_cancel(self, *, thread_context: ChatThreadContext):
@@ -601,7 +601,7 @@ class CodexChatBot(ChatBotBase):
             message=text,
             iso_timestamp=iso_timestamp,
         )
-        thread_context.chat.append_user_message(message=formatted_message)
+        thread_context.session.append_user_message(message=formatted_message)
 
     async def _message_to_turn_input(
         self, *, thread_context: ChatThreadContext, message: dict
@@ -639,7 +639,7 @@ class CodexChatBot(ChatBotBase):
                     break
 
             if hinted_mime is not None and not hinted_mime.startswith("image/"):
-                thread_context.chat.append_assistant_message(
+                thread_context.session.append_assistant_message(
                     message=f"the user attached a file at the path '{path}'"
                 )
                 continue
@@ -652,7 +652,7 @@ class CodexChatBot(ChatBotBase):
                     path,
                     exc_info=exc,
                 )
-                thread_context.chat.append_assistant_message(
+                thread_context.session.append_assistant_message(
                     message=f"the user attached a file at the path '{path}'"
                 )
                 continue
@@ -671,7 +671,7 @@ class CodexChatBot(ChatBotBase):
                         break
 
             if mime_type is None:
-                thread_context.chat.append_assistant_message(
+                thread_context.session.append_assistant_message(
                     message=f"the user attached a file at the path '{path}'"
                 )
                 continue
@@ -724,7 +724,7 @@ class CodexChatBot(ChatBotBase):
             thread_context=thread_context,
             participant=from_participant,
         )
-        thread_context.chat.replace_rules(rules)
+        thread_context.session.replace_rules(rules)
 
         text = message["text"]
         turn_input = await self._message_to_turn_input(
@@ -762,7 +762,7 @@ class CodexChatBot(ChatBotBase):
         await self._codex_backend.on_thread_open(
             thread_key=thread_context.path,
             room=self._room,
-            context=thread_context.chat,
+            context=thread_context.session,
             model=model,
             skill_dirs=self._skill_dirs,
         )
