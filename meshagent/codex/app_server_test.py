@@ -228,6 +228,25 @@ async def test_codex_next_streamed_delta_text_matches_final_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_next_turn_notification_has_no_inactivity_timeout() -> None:
+    backend = _CodexAppServerBackend(request_timeout_s=0.01)
+    turn_queue: asyncio.Queue[dict] = asyncio.Queue()
+
+    async def enqueue_later() -> None:
+        await asyncio.sleep(0.05)
+        turn_queue.put_nowait({"method": "turn/completed", "params": {}})
+
+    notifier = asyncio.create_task(enqueue_later())
+    try:
+        notification = await backend._next_turn_notification(turn_queue=turn_queue)
+    finally:
+        await notifier
+        await backend.close()
+
+    assert notification["method"] == "turn/completed"
+
+
+@pytest.mark.asyncio
 async def test_reasoning_delta_keeps_whitespace_when_streaming() -> None:
     adapter = object.__new__(CodexThreadAdapter)
     adapter._active_events_by_key = {}

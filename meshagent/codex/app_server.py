@@ -1557,16 +1557,7 @@ class _CodexAppServerBackend:
                 f"codex app-server notification router failed: {self._router_error}"
             )
 
-        try:
-            notification = await asyncio.wait_for(
-                turn_queue.get(),
-                timeout=self._request_timeout_s,
-            )
-        except asyncio.TimeoutError as exc:
-            raise CodexAppServerError(
-                "timed out waiting for codex turn events; "
-                f"no events received for {self._request_timeout_s:.0f}s"
-            ) from exc
+        notification = await turn_queue.get()
 
         if notification.get("method") == "__router_error__":
             error = (notification.get("params") or {}).get("error")
