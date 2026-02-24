@@ -8,7 +8,6 @@ import tarfile
 from typing import Optional
 
 from meshagent.agents import (
-    AgentSessionContext,
     LLMAdapter,
     TaskContext,
     ThreadedTaskRunner,
