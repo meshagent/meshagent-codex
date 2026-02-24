@@ -108,9 +108,6 @@ class CodexWorker(Worker):
             annotations=annotations,
         )
 
-    async def init_session(self):
-        return AgentSessionContext(system_role=None)
-
     def default_model(self) -> str:
         return self._model
 
