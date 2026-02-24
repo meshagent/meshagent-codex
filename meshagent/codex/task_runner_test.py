@@ -2,7 +2,7 @@ import re
 
 import pytest
 from meshagent.agents.adapter import LLMAdapter
-from meshagent.agents.context import AgentChatContext
+from meshagent.agents.context import AgentSessionContext
 from meshagent.agents.task_runner import TaskContext
 
 import meshagent.codex.task_runner as task_runner_module
@@ -115,13 +115,12 @@ class _FakeLLMAdapter(LLMAdapter):
         context,
         room,
         toolkits,
-        tool_adapter=None,
         output_schema=None,
         event_handler=None,
         model=None,
         on_behalf_of=None,
     ):
-        del tool_adapter, event_handler
+        del event_handler
         self.calls.append(
             {
                 "context": context,
@@ -158,7 +157,7 @@ class _FakeThreadAdapter:
     async def stop(self) -> None:
         self.stopped = True
 
-    def append_messages(self, *, context: AgentChatContext) -> None:
+    def append_messages(self, *, context: AgentSessionContext) -> None:
         del context
         self.appended = True
 
@@ -220,7 +219,7 @@ async def test_task_runner_manual_threading_uses_selected_thread_path(
     room = _FakeRoom()
     caller = _FakeParticipant(name="caller", participant_id="caller-id")
     context = TaskContext(
-        chat=AgentChatContext(system_role=None),
+        chat=AgentSessionContext(system_role=None),
         room=room,
         caller=caller,
         on_behalf_of=None,
@@ -274,7 +273,7 @@ async def test_task_runner_auto_threading_generates_path(monkeypatch) -> None:
     room = _FakeRoom()
     caller = _FakeParticipant(name="caller", participant_id="caller-id")
     context = TaskContext(
-        chat=AgentChatContext(system_role=None),
+        chat=AgentSessionContext(system_role=None),
         room=room,
         caller=caller,
         on_behalf_of=None,
@@ -335,7 +334,7 @@ async def test_task_runner_auto_threading_uses_custom_name_rules(monkeypatch) ->
     room = _FakeRoom()
     caller = _FakeParticipant(name="caller", participant_id="caller-id")
     context = TaskContext(
-        chat=AgentChatContext(system_role=None),
+        chat=AgentSessionContext(system_role=None),
         room=room,
         caller=caller,
         on_behalf_of=None,

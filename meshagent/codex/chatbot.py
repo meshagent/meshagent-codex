@@ -7,7 +7,7 @@ import uuid
 from typing import Any, Callable, Optional
 from datetime import datetime, timezone
 
-from meshagent.agents import AgentChatContext
+from meshagent.agents import AgentSessionContext
 from meshagent.agents.chat import (
     ChatBotBase,
     ChatThreadContext,
@@ -120,7 +120,7 @@ class CodexChatBot(ChatBotBase):
         participants: list[RemoteParticipant],
         event_handler: Callable[[dict], None],
     ) -> ChatThreadContext:
-        context = AgentChatContext(system_role=None)
+        context = AgentSessionContext(system_role=None)
         context.append_rules(self._rules)
         return ChatThreadContext(
             path=path,

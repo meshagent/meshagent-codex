@@ -8,7 +8,7 @@ import tarfile
 from typing import Optional
 
 from meshagent.agents import (
-    AgentChatContext,
+    AgentSessionContext,
     LLMAdapter,
     TaskContext,
     ThreadedTaskRunner,
@@ -131,8 +131,8 @@ class CodexTaskRunner(ThreadedTaskRunner):
         data.pop("output_schema", None)
         return data
 
-    async def init_chat_context(self):
-        return AgentChatContext(system_role=None)
+    async def init_session(self):
+        return AgentSessionContext(system_role=None)
 
     def default_model(self) -> str:
         return self._model

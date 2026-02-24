@@ -11,8 +11,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 import aiohttp
-from meshagent.agents import ToolResponseAdapter
-from meshagent.agents.agent import AgentChatContext
+from meshagent.agents.agent import AgentSessionContext
 from meshagent.api import RoomClient, RoomException, RemoteParticipant
 from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
 from meshagent.tools import Toolkit
@@ -921,7 +920,7 @@ class _CodexJsonRpcSession:
 
 
 class _CodexThreadState:
-    def __init__(self, *, thread_id: str, context: AgentChatContext):
+    def __init__(self, *, thread_id: str, context: AgentSessionContext):
         self.thread_id = thread_id
         self.context = context
 
@@ -1119,7 +1118,7 @@ class _CodexAppServerBackend:
         *,
         thread_key: str,
         thread_id: str,
-        context: AgentChatContext,
+        context: AgentSessionContext,
     ) -> None:
         async with self._thread_map_lock:
             previous = self._thread_states.get(thread_key)
@@ -1258,7 +1257,7 @@ class _CodexAppServerBackend:
         *,
         thread_key: str,
         room: RoomClient,
-        context: AgentChatContext,
+        context: AgentSessionContext,
         model: Optional[str] = None,
         skill_dirs: Optional[list[str]] = None,
     ) -> None:
@@ -1292,7 +1291,7 @@ class _CodexAppServerBackend:
         self,
         *,
         thread_key: str,
-        context: AgentChatContext,
+        context: AgentSessionContext,
     ) -> None:
         await self.on_thread_cancel(thread_key=thread_key)
         await self._clear_thread_state(thread_key=thread_key)
@@ -2661,13 +2660,11 @@ class _CodexAppServerBackend:
         developer_instructions: Optional[str | list[str]] = None,
         room: RoomClient,
         toolkits: list[Toolkit],
-        tool_adapter: Optional[ToolResponseAdapter] = None,
         event_handler: Optional[Callable[[dict], None]] = None,
         model: Optional[str] = None,
         on_behalf_of: Optional[RemoteParticipant] = None,
     ) -> Any:
         del toolkits
-        del tool_adapter
         del on_behalf_of
 
         resolved_model = self._resolve_model(model=model)

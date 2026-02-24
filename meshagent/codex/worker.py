@@ -3,7 +3,7 @@ import contextlib
 import logging
 from typing import Optional
 
-from meshagent.agents import AgentChatContext, LLMAdapter
+from meshagent.agents import AgentSessionContext, LLMAdapter
 from meshagent.agents.worker import Worker
 from meshagent.api import Requirement, RoomClient
 from meshagent.api.specs.service import ContainerMountSpec
@@ -21,8 +21,24 @@ class _CodexWorkerAdapter(LLMAdapter):
     def default_model(self) -> str:
         return self._model
 
-    async def next(self, **kwargs):
-        del kwargs
+    async def next(
+        self,
+        *,
+        context,
+        room,
+        toolkits,
+        output_schema=None,
+        event_handler=None,
+        model=None,
+        on_behalf_of=None,
+    ):
+        del context
+        del room
+        del toolkits
+        del output_schema
+        del event_handler
+        del model
+        del on_behalf_of
         raise RuntimeError("CodexWorker routes turns through codex app-server directly")
 
 
@@ -92,8 +108,8 @@ class CodexWorker(Worker):
             annotations=annotations,
         )
 
-    async def init_chat_context(self):
-        return AgentChatContext(system_role=None)
+    async def init_session(self):
+        return AgentSessionContext(system_role=None)
 
     def default_model(self) -> str:
         return self._model
@@ -109,7 +125,7 @@ class CodexWorker(Worker):
     async def process_message(
         self,
         *,
-        chat_context: AgentChatContext,
+        chat_context: AgentSessionContext,
         message: dict,
         toolkits: list[Toolkit],
     ):

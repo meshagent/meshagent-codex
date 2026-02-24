@@ -4,7 +4,7 @@ import shutil
 import uuid
 
 import pytest
-from meshagent.agents.context import AgentChatContext
+from meshagent.agents.context import AgentSessionContext
 
 from meshagent.codex.app_server import (
     CodexAppServerError,
@@ -195,7 +195,7 @@ async def test_codex_next_streamed_delta_text_matches_final_message() -> None:
     backend = _CodexAppServerBackend()
     backend._session = _FakeSession(notifications=notifications)
 
-    context = AgentChatContext()
+    context = AgentSessionContext()
     await backend._set_thread_state(
         thread_key="thread:test",
         thread_id=thread_id,
@@ -283,7 +283,7 @@ async def test_codex_next_live_delta_build_matches_done_output() -> None:
 
     backend = _CodexAppServerBackend(forward_stdout=False, forward_stderr=False)
     thread_key = f"thread:live:{uuid.uuid4()}"
-    context = AgentChatContext()
+    context = AgentSessionContext()
     emitted_events: list[dict] = []
 
     try:
@@ -323,7 +323,7 @@ async def test_codex_steer_sends_turn_steer_for_active_turn() -> None:
     fake_session = _FakeSession(notifications=[])
     backend._session = fake_session
 
-    context = AgentChatContext()
+    context = AgentSessionContext()
     await backend._set_thread_state(
         thread_key="thread:test",
         thread_id="thread-1",
@@ -351,7 +351,7 @@ async def test_codex_steer_fails_when_no_active_turn() -> None:
     fake_session = _FakeSession(notifications=[])
     backend._session = fake_session
 
-    context = AgentChatContext()
+    context = AgentSessionContext()
     await backend._set_thread_state(
         thread_key="thread:test",
         thread_id="thread-1",
