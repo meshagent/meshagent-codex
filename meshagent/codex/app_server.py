@@ -24,6 +24,8 @@ DEFAULT_CODEX_CONTAINER_MOUNTS = ContainerMountSpec(
     room=[RoomStorageMountSpec(path="/data")]
 )
 
+JsonRpcId = str | int
+
 
 class CodexAppServerError(RoomException):
     pass
@@ -134,6 +136,39 @@ def _get_nested_id(params: dict, *, singular: str, nested_key: str) -> Optional[
     return None
 
 
+def _json_rpc_id_lookup_candidates(value: Any) -> list[JsonRpcId]:
+    # JSON-RPC ids are string or number. Be tolerant of type coercion across
+    # transports by checking equivalent string/int forms for integral ids.
+    if value is None or isinstance(value, bool):
+        return []
+
+    candidates: list[JsonRpcId] = []
+
+    def append_candidate(candidate: JsonRpcId) -> None:
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    if isinstance(value, int):
+        append_candidate(value)
+        append_candidate(str(value))
+        return candidates
+
+    if isinstance(value, float):
+        if value.is_integer():
+            integer_value = int(value)
+            append_candidate(integer_value)
+            append_candidate(str(integer_value))
+        return candidates
+
+    if isinstance(value, str):
+        append_candidate(value)
+        if value.isdigit():
+            append_candidate(int(value))
+        return candidates
+
+    return candidates
+
+
 class _CodexJsonRpcSession:
     def __init__(
         self,
@@ -179,7 +214,7 @@ class _CodexJsonRpcSession:
         self._stderr_task: Optional[asyncio.Task] = None
 
         self._notifications: asyncio.Queue[dict] = asyncio.Queue()
-        self._pending: dict[int, asyncio.Future] = {}
+        self._pending: dict[JsonRpcId, asyncio.Future[Any]] = {}
         self._next_id = 1
 
         self._started = False
@@ -815,16 +850,11 @@ class _CodexJsonRpcSession:
 
         # Standard JSON-RPC response
         if request_id is not None and method is None:
-            request_key = None
-            if isinstance(request_id, int):
-                request_key = request_id
-            elif isinstance(request_id, str) and request_id.isdigit():
-                request_key = int(request_id)
-
-            if request_key is None:
-                return
-
-            future = self._pending.get(request_key)
+            future = None
+            for candidate in _json_rpc_id_lookup_candidates(request_id):
+                future = self._pending.get(candidate)
+                if future is not None:
+                    break
             if future is None or future.done():
                 return
 

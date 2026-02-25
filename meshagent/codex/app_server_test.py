@@ -414,3 +414,29 @@ async def test_session_start_reports_missing_executable_details(monkeypatch) -> 
     assert "unable to launch codex app-server with command: codex app-server" in message
     assert "missing_path=codex" in message
     assert "executable 'codex' not found on PATH" in message
+
+
+@pytest.mark.asyncio
+async def test_session_dispatch_matches_non_numeric_string_response_id() -> None:
+    session = _CodexJsonRpcSession(command="codex app-server")
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    session._pending["turn:steer:1"] = future
+
+    await session._dispatch_message({"id": "turn:steer:1", "result": {"ok": True}})
+
+    assert future.done()
+    assert future.result() == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_session_dispatch_matches_integral_float_response_id() -> None:
+    session = _CodexJsonRpcSession(command="codex app-server")
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    session._pending[7] = future
+
+    await session._dispatch_message({"id": 7.0, "result": "ok"})
+
+    assert future.done()
+    assert future.result() == "ok"
