@@ -1023,10 +1023,8 @@ class _CodexAppServerBackend:
         self._router_error: Optional[Exception] = None
         self._turn_queues: dict[tuple[str, str], asyncio.Queue[dict]] = {}
         self._pending_turn_notifications: dict[tuple[str, str], deque[dict]] = {}
-        self._thread_map_lock = asyncio.Lock()
         self._thread_states: dict[str, _CodexThreadState] = {}
         self._thread_keys_by_thread_id: dict[str, str] = {}
-        self._active_turns_lock = asyncio.Lock()
         self._active_turns: dict[str, set[tuple[str, str]]] = {}
 
     def _normalized_sandbox_mode(self) -> Optional[str]:
@@ -1068,12 +1066,9 @@ class _CodexAppServerBackend:
             self._turn_queues.clear()
             self._pending_turn_notifications.clear()
 
-        async with self._thread_map_lock:
-            self._thread_states.clear()
-            self._thread_keys_by_thread_id.clear()
-
-        async with self._active_turns_lock:
-            self._active_turns.clear()
+        self._thread_states.clear()
+        self._thread_keys_by_thread_id.clear()
+        self._active_turns.clear()
 
         self._router_error = None
         await self._session.close()
@@ -1140,8 +1135,7 @@ class _CodexAppServerBackend:
     async def _get_thread_state(
         self, *, thread_key: str
     ) -> Optional[_CodexThreadState]:
-        async with self._thread_map_lock:
-            return self._thread_states.get(thread_key)
+        return self._thread_states.get(thread_key)
 
     async def _set_thread_state(
         self,
@@ -1150,32 +1144,29 @@ class _CodexAppServerBackend:
         thread_id: str,
         context: AgentSessionContext,
     ) -> None:
-        async with self._thread_map_lock:
-            previous = self._thread_states.get(thread_key)
-            if previous is not None:
-                self._thread_keys_by_thread_id.pop(previous.thread_id, None)
-            self._thread_states[thread_key] = _CodexThreadState(
-                thread_id=thread_id,
-                context=context,
-            )
-            self._thread_keys_by_thread_id[thread_id] = thread_key
+        previous = self._thread_states.get(thread_key)
+        if previous is not None:
+            self._thread_keys_by_thread_id.pop(previous.thread_id, None)
+        self._thread_states[thread_key] = _CodexThreadState(
+            thread_id=thread_id,
+            context=context,
+        )
+        self._thread_keys_by_thread_id[thread_id] = thread_key
 
     async def _clear_thread_state(self, *, thread_key: str) -> None:
-        async with self._thread_map_lock:
-            previous = self._thread_states.pop(thread_key, None)
-            if previous is not None:
-                self._thread_keys_by_thread_id.pop(previous.thread_id, None)
+        previous = self._thread_states.pop(thread_key, None)
+        if previous is not None:
+            self._thread_keys_by_thread_id.pop(previous.thread_id, None)
 
     async def _thread_key_for_thread_id(self, *, thread_id: str) -> Optional[str]:
-        async with self._thread_map_lock:
-            thread_key = self._thread_keys_by_thread_id.get(thread_id)
-            if thread_key is not None:
-                return thread_key
+        thread_key = self._thread_keys_by_thread_id.get(thread_id)
+        if thread_key is not None:
+            return thread_key
 
-            for key, state in self._thread_states.items():
-                if state.thread_id == thread_id:
-                    self._thread_keys_by_thread_id[thread_id] = key
-                    return key
+        for key, state in self._thread_states.items():
+            if state.thread_id == thread_id:
+                self._thread_keys_by_thread_id[thread_id] = key
+                return key
 
         return None
 
@@ -1290,7 +1281,8 @@ class _CodexAppServerBackend:
         context: AgentSessionContext,
         model: Optional[str] = None,
         skill_dirs: Optional[list[str]] = None,
-    ) -> None:
+        external_thread_id: Optional[str] = None,
+    ) -> str:
         if model is None:
             model = self._model
 
@@ -1305,7 +1297,23 @@ class _CodexAppServerBackend:
                     thread_id=existing_state.thread_id,
                     context=context,
                 )
-                return
+                return existing_state.thread_id
+
+        persisted_thread_id: Optional[str] = None
+        if isinstance(external_thread_id, str):
+            normalized_thread_id = external_thread_id.strip()
+            if normalized_thread_id != "":
+                persisted_thread_id = normalized_thread_id
+
+        if persisted_thread_id is not None:
+            resumed = await self._resume_thread(thread_id=persisted_thread_id)
+            if resumed:
+                await self._set_thread_state(
+                    thread_key=thread_key,
+                    thread_id=persisted_thread_id,
+                    context=context,
+                )
+                return persisted_thread_id
 
         thread_id = await self._start_thread(model=model)
         await self._set_thread_state(
@@ -1317,6 +1325,8 @@ class _CodexAppServerBackend:
         if skill_dirs is not None and len(skill_dirs) > 0:
             await self.enable_skills(paths=skill_dirs)
 
+        return thread_id
+
     async def on_thread_clear(
         self,
         *,
@@ -1327,8 +1337,7 @@ class _CodexAppServerBackend:
         await self._clear_thread_state(thread_key=thread_key)
 
     async def on_thread_cancel(self, *, thread_key: str) -> None:
-        async with self._active_turns_lock:
-            active_turns = list(self._active_turns.pop(thread_key, set()))
+        active_turns = list(self._active_turns.pop(thread_key, set()))
 
         for thread_id, turn_id in active_turns:
             with contextlib.suppress(Exception):
@@ -1344,15 +1353,14 @@ class _CodexAppServerBackend:
     async def _active_turn_id_for_thread(
         self, *, thread_key: str, thread_id: str
     ) -> Optional[str]:
-        async with self._active_turns_lock:
-            active_turns = self._active_turns.get(thread_key)
-            if active_turns is None or len(active_turns) == 0:
-                return None
-
-            for candidate_thread_id, turn_id in active_turns:
-                if candidate_thread_id == thread_id:
-                    return turn_id
+        active_turns = self._active_turns.get(thread_key)
+        if active_turns is None or len(active_turns) == 0:
             return None
+
+        for candidate_thread_id, turn_id in active_turns:
+            if candidate_thread_id == thread_id:
+                return turn_id
+        return None
 
     async def steer(self, *, thread_key: str, message: str | list[dict]) -> None:
         turn_input = self._normalize_turn_input(message=message)
@@ -1388,12 +1396,11 @@ class _CodexAppServerBackend:
         thread_id: str,
         turn_id: str,
     ) -> None:
-        async with self._active_turns_lock:
-            active_turns = self._active_turns.get(thread_key)
-            if active_turns is None:
-                active_turns = set()
-                self._active_turns[thread_key] = active_turns
-            active_turns.add((thread_id, turn_id))
+        active_turns = self._active_turns.get(thread_key)
+        if active_turns is None:
+            active_turns = set()
+            self._active_turns[thread_key] = active_turns
+        active_turns.add((thread_id, turn_id))
 
     async def _untrack_active_turn(
         self,
@@ -1402,14 +1409,13 @@ class _CodexAppServerBackend:
         thread_id: str,
         turn_id: str,
     ) -> None:
-        async with self._active_turns_lock:
-            active_turns = self._active_turns.get(thread_key)
-            if active_turns is None:
-                return
+        active_turns = self._active_turns.get(thread_key)
+        if active_turns is None:
+            return
 
-            active_turns.discard((thread_id, turn_id))
-            if len(active_turns) == 0:
-                self._active_turns.pop(thread_key, None)
+        active_turns.discard((thread_id, turn_id))
+        if len(active_turns) == 0:
+            self._active_turns.pop(thread_key, None)
 
     def _extract_turn_id(self, result: Any) -> str:
         if isinstance(result, dict):
@@ -2703,6 +2709,7 @@ class _CodexAppServerBackend:
         turn_id = None
         turn_queue: Optional[asyncio.Queue[dict]] = None
         final_text = ""
+        turn_cancelled = False
         output_started = False
         output_done = False
         # Some app-server builds emit both delta method variants with identical
@@ -2850,15 +2857,30 @@ class _CodexAppServerBackend:
                 elif method_lower == "turn/completed":
                     turn = params.get("turn")
                     if isinstance(turn, dict):
-                        status = turn.get("status")
+                        status = self._normalize_status_value(
+                            value=turn.get("status")
+                        ) or self._status_from_payload(params=params)
                         if status == "failed":
                             error = turn.get("error")
                             raise CodexAppServerError(
                                 f"codex turn failed: {error or 'unknown error'}"
                             )
+                        if status == "cancelled":
+                            turn_cancelled = True
+                    break
+
+                elif method_lower in (
+                    "turn/cancelled",
+                    "turn/canceled",
+                    "turn/interrupted",
+                    "turn/aborted",
+                ):
+                    turn_cancelled = True
                     break
 
             if final_text == "":
+                if turn_cancelled:
+                    return ""
                 raise CodexAppServerError("codex app-server returned no text output")
 
             context.append_assistant_message(final_text)

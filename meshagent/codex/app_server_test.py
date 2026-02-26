@@ -43,6 +43,29 @@ class _FakeSession:
         return
 
 
+class _FakeThreadOpenSession(_FakeSession):
+    def __init__(
+        self,
+        *,
+        resume_thread_ids: set[str] | None = None,
+        start_thread_id: str = "thread-started",
+    ):
+        super().__init__(notifications=[])
+        self._resume_thread_ids = resume_thread_ids or set()
+        self._start_thread_id = start_thread_id
+
+    async def request(self, *, method: str, params: dict) -> dict:
+        self._requests.append((method, params))
+        if method == "thread/resume":
+            thread_id = params.get("threadId")
+            if isinstance(thread_id, str) and thread_id in self._resume_thread_ids:
+                return {"thread": {"id": thread_id}}
+            raise RuntimeError("thread not found")
+        if method == "thread/start":
+            return {"thread": {"id": self._start_thread_id}}
+        raise AssertionError(f"unexpected request: {method}")
+
+
 class _FakeElement:
     def __init__(self, *, tag_name: str, attributes: dict | None = None):
         self.tag_name = tag_name
@@ -228,6 +251,46 @@ async def test_codex_next_streamed_delta_text_matches_final_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_codex_next_returns_empty_string_for_cancelled_turn_without_output() -> (
+    None
+):
+    thread_id = "thread-1"
+    turn_id = "turn-1"
+    notifications = [
+        _notification(
+            method="turn/completed",
+            thread_id=thread_id,
+            turn_id=turn_id,
+            turn_status="cancelled",
+        ),
+    ]
+
+    backend = _CodexAppServerBackend()
+    backend._session = _FakeSession(notifications=notifications)
+
+    context = AgentSessionContext()
+    await backend._set_thread_state(
+        thread_key="thread:test",
+        thread_id=thread_id,
+        context=context,
+    )
+
+    try:
+        result = await backend.next(
+            thread_key="thread:test",
+            message="hi",
+            room=object(),
+            toolkits=[],
+            event_handler=None,
+        )
+    finally:
+        await backend.close()
+
+    assert result == ""
+    assert context.messages == []
+
+
+@pytest.mark.asyncio
 async def test_next_turn_notification_has_no_inactivity_timeout() -> None:
     backend = _CodexAppServerBackend(request_timeout_s=0.01)
     turn_queue: asyncio.Queue[dict] = asyncio.Queue()
@@ -244,6 +307,59 @@ async def test_next_turn_notification_has_no_inactivity_timeout() -> None:
         await backend.close()
 
     assert notification["method"] == "turn/completed"
+
+
+@pytest.mark.asyncio
+async def test_on_thread_open_resumes_persisted_external_thread_id() -> None:
+    backend = _CodexAppServerBackend()
+    fake_session = _FakeThreadOpenSession(resume_thread_ids={"thread-persisted"})
+    backend._session = fake_session
+    context = AgentSessionContext()
+
+    try:
+        thread_id = await backend.on_thread_open(
+            thread_key="thread:test",
+            room=object(),  # type: ignore[arg-type]
+            context=context,
+            external_thread_id="thread-persisted",
+        )
+        state = await backend._get_thread_state(thread_key="thread:test")
+    finally:
+        await backend.close()
+
+    assert thread_id == "thread-persisted"
+    assert fake_session._requests[0] == (
+        "thread/resume",
+        {"threadId": "thread-persisted"},
+    )
+    assert all(method != "thread/start" for method, _params in fake_session._requests)
+    assert state is not None
+    assert state.thread_id == "thread-persisted"
+
+
+@pytest.mark.asyncio
+async def test_on_thread_open_starts_new_thread_when_persisted_resume_fails() -> None:
+    backend = _CodexAppServerBackend()
+    fake_session = _FakeThreadOpenSession(start_thread_id="thread-new")
+    backend._session = fake_session
+    context = AgentSessionContext()
+
+    try:
+        thread_id = await backend.on_thread_open(
+            thread_key="thread:test",
+            room=object(),  # type: ignore[arg-type]
+            context=context,
+            external_thread_id="thread-missing",
+        )
+        state = await backend._get_thread_state(thread_key="thread:test")
+    finally:
+        await backend.close()
+
+    methods = [method for method, _params in fake_session._requests]
+    assert methods[:2] == ["thread/resume", "thread/start"]
+    assert thread_id == "thread-new"
+    assert state is not None
+    assert state.thread_id == "thread-new"
 
 
 @pytest.mark.asyncio

@@ -49,7 +49,7 @@ class CodexChatBot(ChatBotBase):
         empty_state_title: Optional[str] = None,
         annotations: Optional[list[str]] = None,
         skill_dirs: Optional[list[str]] = None,
-        model: str = "gpt-5.2-codex",
+        model: str = "gpt-5.3-codex",
         command: Optional[str] = None,
         ws_url: Optional[str] = None,
         image: Optional[str] = None,
@@ -127,6 +127,70 @@ class CodexChatBot(ChatBotBase):
             participants=participants,
             event_handler=event_handler,
             session=context,
+        )
+
+    def _external_thread_id_from_thread(
+        self, *, thread_context: ChatThreadContext
+    ) -> Optional[str]:
+        messages = thread_context.thread.root.get_children_by_tag_name("messages")
+        if len(messages) == 0:
+            return None
+
+        value = messages[0].get_attribute("external_thread_id")
+        if not isinstance(value, str):
+            return None
+
+        normalized = value.strip()
+        if normalized == "":
+            return None
+
+        return normalized
+
+    def _set_external_thread_id_on_thread(
+        self,
+        *,
+        thread_context: ChatThreadContext,
+        external_thread_id: str,
+    ) -> None:
+        normalized = external_thread_id.strip()
+        if normalized == "":
+            return
+
+        messages = thread_context.thread.root.get_children_by_tag_name("messages")
+        if len(messages) == 0:
+            return
+
+        messages[0].set_attribute("external_thread_id", normalized)
+
+    def _clear_external_thread_id_on_thread(
+        self, *, thread_context: ChatThreadContext
+    ) -> None:
+        messages = thread_context.thread.root.get_children_by_tag_name("messages")
+        if len(messages) == 0:
+            return
+
+        messages[0].set_attribute("external_thread_id", "")
+
+    async def _open_codex_thread(
+        self,
+        *,
+        thread_context: ChatThreadContext,
+        model: str,
+    ) -> None:
+        stored_thread_id = self._external_thread_id_from_thread(
+            thread_context=thread_context
+        )
+        resolved_thread_id = await self._codex_backend.on_thread_open(
+            thread_key=thread_context.path,
+            room=self._room,
+            context=thread_context.session,
+            model=model,
+            skill_dirs=self._skill_dirs,
+            external_thread_id=stored_thread_id,
+        )
+        self._set_external_thread_id_on_thread(
+            thread_context=thread_context,
+            external_thread_id=resolved_thread_id,
         )
 
     def _status_event_details(
@@ -496,17 +560,15 @@ class CodexChatBot(ChatBotBase):
 
     async def on_thread_open(self, *, thread_context: ChatThreadContext):
         await self.clear_thread_status(path=thread_context.path)
-        await self._codex_backend.on_thread_open(
-            thread_key=thread_context.path,
-            room=self._room,
-            context=thread_context.session,
+        await self._open_codex_thread(
+            thread_context=thread_context,
             model=self._model,
-            skill_dirs=self._skill_dirs,
         )
 
     async def on_thread_clear(self, *, thread_context: ChatThreadContext):
         await self.clear_thread_status(path=thread_context.path)
         await self._cancel_all_pending_approvals(thread_key=thread_context.path)
+        self._clear_external_thread_id_on_thread(thread_context=thread_context)
         await self._codex_backend.on_thread_clear(
             thread_key=thread_context.path,
             context=thread_context.session,
@@ -810,12 +872,9 @@ class CodexChatBot(ChatBotBase):
                 )
             )
 
-        await self._codex_backend.on_thread_open(
-            thread_key=thread_context.path,
-            room=self._room,
-            context=thread_context.session,
+        await self._open_codex_thread(
+            thread_context=thread_context,
             model=model,
-            skill_dirs=self._skill_dirs,
         )
 
         return await self._codex_backend.next(

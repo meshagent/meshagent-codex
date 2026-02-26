@@ -1,6 +1,8 @@
 import asyncio
 
 import pytest
+from meshagent.agents import AgentSessionContext
+from meshagent.agents.chat import ChatThreadContext
 from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
 
 from meshagent.codex.chatbot import CodexChatBot
@@ -141,3 +143,62 @@ async def test_message_to_turn_input_respects_room_mount_subpath() -> None:
     )
 
     assert turn_input == [{"type": "localImage", "path": "/images/photo.png"}]
+
+
+class _FakeMessagesElement:
+    def __init__(self):
+        self._attrs: dict[str, str] = {}
+
+    def get_attribute(self, key: str):
+        return self._attrs.get(key)
+
+    def set_attribute(self, key: str, value):
+        if isinstance(value, str):
+            self._attrs[key] = value
+        elif value is None:
+            self._attrs.pop(key, None)
+
+
+class _FakeRoot:
+    def __init__(self, messages: _FakeMessagesElement):
+        self._messages = messages
+
+    def get_children_by_tag_name(self, tag_name: str):
+        if tag_name == "messages":
+            return [self._messages]
+        return []
+
+
+class _FakeThread:
+    def __init__(self, root: _FakeRoot):
+        self.root = root
+
+
+class _FakeBackend:
+    def __init__(self):
+        self.cleared: list[tuple[str, AgentSessionContext]] = []
+
+    async def on_thread_clear(self, *, thread_key: str, context: AgentSessionContext):
+        self.cleared.append((thread_key, context))
+
+
+@pytest.mark.asyncio
+async def test_on_thread_clear_resets_external_thread_id() -> None:
+    bot = CodexChatBot(name="codex-test")
+    fake_backend = _FakeBackend()
+    bot._codex_backend = fake_backend
+
+    messages = _FakeMessagesElement()
+    messages.set_attribute("external_thread_id", "thread-123")
+    thread_context = ChatThreadContext(
+        path="/threads/test",
+        thread=_FakeThread(root=_FakeRoot(messages=messages)),  # type: ignore[arg-type]
+        participants=[],
+        session=AgentSessionContext(),
+    )
+
+    await bot.on_thread_clear(thread_context=thread_context)
+
+    assert messages.get_attribute("external_thread_id") == ""
+    assert bot._external_thread_id_from_thread(thread_context=thread_context) is None
+    assert fake_backend.cleared == [("/threads/test", thread_context.session)]
