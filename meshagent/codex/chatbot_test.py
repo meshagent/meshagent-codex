@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
 
 from meshagent.codex.chatbot import CodexChatBot
 
@@ -85,3 +86,58 @@ def test_codex_status_completion_without_key_keeps_fallback_status(monkeypatch) 
 
     assert updates == [(path, "Thinking")]
     assert cleared == []
+
+
+@pytest.mark.asyncio
+async def test_message_to_turn_input_uses_local_image_with_default_room_mount() -> None:
+    bot = CodexChatBot(name="codex-test")
+
+    turn_input = await bot._message_to_turn_input(
+        message={
+            "text": "check this",
+            "attachments": [{"path": "test.jpg"}],
+        }
+    )
+
+    assert turn_input == [
+        {"type": "text", "text": "check this"},
+        {"type": "localImage", "path": "/data/test.jpg"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_message_to_turn_input_adds_text_for_non_image_attachment() -> None:
+    bot = CodexChatBot(name="codex-test")
+
+    turn_input = await bot._message_to_turn_input(
+        message={
+            "text": "",
+            "attachments": [{"path": "docs/report.pdf"}],
+        }
+    )
+
+    assert turn_input == [
+        {"type": "text", "text": "file attached /data/docs/report.pdf"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_message_to_turn_input_respects_room_mount_subpath() -> None:
+    bot = CodexChatBot(
+        name="codex-test",
+        mounts=ContainerMountSpec(
+            room=[
+                RoomStorageMountSpec(path="/data"),
+                RoomStorageMountSpec(path="/images", subpath="assets"),
+            ]
+        ),
+    )
+
+    turn_input = await bot._message_to_turn_input(
+        message={
+            "text": "",
+            "attachments": [{"path": "assets/photo.png"}],
+        }
+    )
+
+    assert turn_input == [{"type": "localImage", "path": "/images/photo.png"}]

@@ -1,4 +1,3 @@
-import base64
 import asyncio
 import json
 import logging
@@ -18,7 +17,7 @@ from meshagent.api import RemoteParticipant
 from meshagent.api.specs.service import ContainerMountSpec
 from meshagent.tools import Toolkit, make_toolkits
 
-from .app_server import _CodexAppServerBackend
+from .app_server import DEFAULT_CODEX_CONTAINER_MOUNTS, _CodexAppServerBackend
 from .thread_adapter import CodexThreadAdapter
 
 logger = logging.getLogger("codex.chatbot")
@@ -62,6 +61,7 @@ class CodexChatBot(ChatBotBase):
         verbose: bool = False,
     ):
         self._model = model
+        self._mounts = mounts or DEFAULT_CODEX_CONTAINER_MOUNTS
         adapter_kwargs = {"model": model}
         if command is not None:
             adapter_kwargs["command"] = command
@@ -69,8 +69,7 @@ class CodexChatBot(ChatBotBase):
             adapter_kwargs["ws_url"] = ws_url
         if image is not None:
             adapter_kwargs["image"] = image
-        if mounts is not None:
-            adapter_kwargs["mounts"] = mounts
+        adapter_kwargs["mounts"] = self._mounts
         if cwd is not None:
             adapter_kwargs["cwd"] = cwd
         if approval_policy is not None:
@@ -603,9 +602,95 @@ class CodexChatBot(ChatBotBase):
         )
         thread_context.session.append_user_message(message=formatted_message)
 
-    async def _message_to_turn_input(
-        self, *, thread_context: ChatThreadContext, message: dict
-    ) -> list[dict]:
+    def _normalize_attachment_path(self, *, path: str) -> Optional[str]:
+        cleaned = path.strip().replace("\\", "/")
+        if cleaned in ("", ".", "/"):
+            return None
+        normalized = cleaned.strip("/")
+        if normalized == "":
+            return None
+        parts = [part for part in normalized.split("/") if part != ""]
+        if len(parts) == 0:
+            return None
+        if any(part in (".", "..") for part in parts):
+            return None
+        return "/".join(parts)
+
+    def _normalize_room_subpath(self, *, subpath: Optional[str]) -> Optional[str]:
+        if subpath is None:
+            return ""
+        cleaned = subpath.strip().replace("\\", "/")
+        if cleaned in ("", ".", "/"):
+            return ""
+        normalized = cleaned.strip("/")
+        if normalized == "":
+            return ""
+        parts = [part for part in normalized.split("/") if part != ""]
+        if len(parts) == 0:
+            return ""
+        if any(part in (".", "..") for part in parts):
+            return None
+        return "/".join(parts)
+
+    def _normalize_container_mount_path(self, *, path: str) -> Optional[str]:
+        cleaned = path.strip().replace("\\", "/")
+        if cleaned == "":
+            return None
+        normalized = cleaned if cleaned.startswith("/") else f"/{cleaned}"
+        parts = [part for part in normalized.split("/") if part != ""]
+        if len(parts) == 0:
+            return "/"
+        if any(part in (".", "..") for part in parts):
+            return None
+        return f"/{'/'.join(parts)}"
+
+    def _resolve_attachment_container_path(self, *, path: str) -> Optional[str]:
+        room_path = self._normalize_attachment_path(path=path)
+        if room_path is None:
+            return None
+
+        room_mounts = self._mounts.room
+        if room_mounts is None:
+            return None
+
+        best_match_path = None
+        best_match_subpath_length = -1
+
+        for room_mount in room_mounts:
+            mount_path = self._normalize_container_mount_path(path=room_mount.path)
+            if mount_path is None:
+                continue
+
+            mount_subpath = self._normalize_room_subpath(subpath=room_mount.subpath)
+            if mount_subpath is None:
+                continue
+
+            relative_path = None
+            if mount_subpath == "":
+                relative_path = room_path
+            elif room_path == mount_subpath:
+                relative_path = ""
+            elif room_path.startswith(f"{mount_subpath}/"):
+                relative_path = room_path[len(mount_subpath) + 1 :]
+
+            if relative_path is None:
+                continue
+
+            if relative_path == "":
+                resolved_path = mount_path
+            elif mount_path == "/":
+                resolved_path = f"/{relative_path}"
+            else:
+                resolved_path = f"{mount_path}/{relative_path}"
+
+            subpath_length = len(mount_subpath)
+            if subpath_length > best_match_subpath_length:
+                best_match_subpath_length = subpath_length
+                best_match_path = resolved_path
+
+        return best_match_path
+
+    async def _message_to_turn_input(self, *, message: dict) -> list[dict]:
         text = message.get("text")
         if not isinstance(text, str):
             text = ""
@@ -625,6 +710,9 @@ class CodexChatBot(ChatBotBase):
             if not isinstance(path, str) or path.strip() == "":
                 continue
 
+            mounted_path = self._resolve_attachment_container_path(path=path)
+            path_for_text = mounted_path if mounted_path is not None else path.strip()
+
             hinted_mime = None
             for candidate in (
                 attachment.get("mime_type"),
@@ -638,51 +726,16 @@ class CodexChatBot(ChatBotBase):
                     hinted_mime = normalized
                     break
 
-            if hinted_mime is not None and not hinted_mime.startswith("image/"):
-                thread_context.session.append_assistant_message(
-                    message=f"the user attached a file at the path '{path}'"
-                )
-                continue
-
-            try:
-                file_response = await self.room.storage.download(path=path)
-            except Exception as exc:
-                logger.warning(
-                    "unable to download attachment at '%s' for codex chat input",
-                    path,
-                    exc_info=exc,
-                )
-                thread_context.session.append_assistant_message(
-                    message=f"the user attached a file at the path '{path}'"
-                )
-                continue
-
-            mime_type = None
-            for candidate in (
-                hinted_mime,
-                file_response.mime_type,
+            if (
+                hinted_mime is not None
+                and hinted_mime.startswith("image/")
+                and mounted_path is not None
             ):
-                if isinstance(candidate, str):
-                    normalized = candidate.split(";")[0].strip().lower()
-                    if normalized == "image/jpg":
-                        normalized = "image/jpeg"
-                    if normalized.startswith("image/"):
-                        mime_type = normalized
-                        break
-
-            if mime_type is None:
-                thread_context.session.append_assistant_message(
-                    message=f"the user attached a file at the path '{path}'"
+                turn_input.append({"type": "localImage", "path": mounted_path})
+            else:
+                turn_input.append(
+                    {"type": "text", "text": f"file attached {path_for_text}"}
                 )
-                continue
-
-            encoded = base64.b64encode(file_response.data).decode("ascii")
-            turn_input.append(
-                {
-                    "type": "image",
-                    "url": f"data:{mime_type};base64,{encoded}",
-                }
-            )
 
         if len(turn_input) == 0:
             raise RoomException("steering message cannot be empty")
@@ -697,7 +750,6 @@ class CodexChatBot(ChatBotBase):
         message: dict,
     ) -> None:
         turn_input = await self._message_to_turn_input(
-            thread_context=thread_context,
             message=message,
         )
         text = message.get("text")
@@ -728,7 +780,6 @@ class CodexChatBot(ChatBotBase):
 
         text = message["text"]
         turn_input = await self._message_to_turn_input(
-            thread_context=thread_context,
             message=message,
         )
         self._append_user_message_to_context(
