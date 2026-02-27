@@ -19,6 +19,73 @@ async def test_codex_cancel_keeps_thread_worker_running() -> None:
         bot._thread_tasks["/threads/test"].cancel()
 
 
+@pytest.mark.asyncio
+async def test_clear_thread_status_ignores_stale_nowait_update(monkeypatch) -> None:
+    bot = CodexChatBot(name="codex-test")
+    path = "/threads/test"
+    updates: list[tuple[str, str | None]] = []
+
+    async def _capture_set(
+        *, path: str, status: str | None, mode: str | None = None
+    ) -> None:
+        del mode
+        updates.append((path, status))
+
+    monkeypatch.setattr(bot, "set_thread_status", _capture_set)
+
+    bot._set_thread_status_nowait(path=path, status="Applying diff")
+    await bot.clear_thread_status(path=path)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert updates == [(path, None)]
+
+
+@pytest.mark.asyncio
+async def test_diff_status_events_do_not_restore_status_after_turn_clear(
+    monkeypatch,
+) -> None:
+    bot = CodexChatBot(name="codex-test")
+    path = "/threads/test"
+    updates: list[tuple[str, str | None]] = []
+
+    async def _capture_set(
+        *, path: str, status: str | None, mode: str | None = None
+    ) -> None:
+        del mode
+        updates.append((path, status))
+
+    monkeypatch.setattr(bot, "set_thread_status", _capture_set)
+
+    bot._update_thread_status_from_event(
+        path=path,
+        event={
+            "type": "agent.event",
+            "kind": "diff",
+            "state": "in_progress",
+            "correlation_key": "turn.diff:turn-1",
+            "headline": "Applying diff",
+        },
+    )
+    bot._update_thread_status_from_event(
+        path=path,
+        event={
+            "type": "agent.event",
+            "kind": "diff",
+            "state": "completed",
+            "correlation_key": "turn.diff:turn-1",
+            "headline": "Diff updated",
+        },
+    )
+
+    # Mirror turn teardown behavior after task completion.
+    await bot.clear_thread_status(path=path)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert updates == [(path, None)]
+
+
 def test_codex_status_completion_keeps_fallback_status(monkeypatch) -> None:
     bot = CodexChatBot(name="codex-test")
     path = "/threads/test"

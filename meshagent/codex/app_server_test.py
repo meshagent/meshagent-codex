@@ -291,6 +291,83 @@ async def test_codex_next_returns_empty_string_for_cancelled_turn_without_output
 
 
 @pytest.mark.asyncio
+async def test_codex_next_task_complete_finishes_before_late_turn_completed() -> None:
+    thread_id = "thread-1"
+    turn_id = "turn-1"
+    final_text = "done"
+    notifications = [
+        _notification(
+            method="turn/diff/updated",
+            thread_id=thread_id,
+            turn_id=turn_id,
+        ),
+        {
+            "method": "codex/event/task_complete",
+            "params": {
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "msg": {"last_agent_message": {"text": final_text}},
+            },
+        },
+        _notification(
+            method="turn/completed",
+            thread_id=thread_id,
+            turn_id=turn_id,
+            turn_status="completed",
+        ),
+    ]
+
+    backend = _CodexAppServerBackend()
+    backend._session = _FakeSession(notifications=notifications)
+
+    context = AgentSessionContext()
+    await backend._set_thread_state(
+        thread_key="thread:test",
+        thread_id=thread_id,
+        context=context,
+    )
+
+    emitted_events: list[dict] = []
+
+    def _event_handler(event: dict) -> None:
+        emitted_events.append(event)
+
+    try:
+        result = await backend.next(
+            thread_key="thread:test",
+            message="hi",
+            room=object(),
+            toolkits=[],
+            event_handler=_event_handler,
+        )
+        active_turn = await backend._active_turn_id_for_thread(
+            thread_key="thread:test",
+            thread_id=thread_id,
+        )
+    finally:
+        await backend.close()
+
+    status_events = [
+        event for event in emitted_events if event.get("type") == "agent.event"
+    ]
+    raw_methods = [
+        method
+        for method in (event.get("method") for event in emitted_events)
+        if isinstance(method, str)
+    ]
+
+    assert result == final_text
+    assert context.messages[-1]["content"] == final_text
+    assert active_turn is None
+    assert any(
+        event.get("kind") == "diff" and event.get("state") == "in_progress"
+        for event in status_events
+    )
+    assert "codex/event/task_complete" in raw_methods
+    assert "turn/completed" not in raw_methods
+
+
+@pytest.mark.asyncio
 async def test_next_turn_notification_has_no_inactivity_timeout() -> None:
     backend = _CodexAppServerBackend(request_timeout_s=0.01)
     turn_queue: asyncio.Queue[dict] = asyncio.Queue()
