@@ -49,6 +49,9 @@ class CodexChatBot(ChatBotBase):
         empty_state_title: Optional[str] = None,
         annotations: Optional[list[str]] = None,
         skill_dirs: Optional[list[str]] = None,
+        thread_dir: Optional[str] = None,
+        threading_mode: Optional[str] = None,
+        thread_name_rules: Optional[list[str]] = None,
         model: str = "gpt-5.3-codex",
         command: Optional[str] = None,
         ws_url: Optional[str] = None,
@@ -99,6 +102,9 @@ class CodexChatBot(ChatBotBase):
             empty_state_title=empty_state_title,
             annotations=annotations,
             skill_dirs=skill_dirs,
+            thread_dir=thread_dir,
+            threading_mode=threading_mode,
+            thread_name_rules=thread_name_rules,
         )
 
     def default_model(self) -> str:
