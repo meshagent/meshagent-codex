@@ -5,6 +5,7 @@ from meshagent.agents import AgentSessionContext
 from meshagent.agents.chat import ChatThreadContext
 from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
 
+from meshagent.codex.app_server import CodexAppServerError
 from meshagent.codex.chatbot import CodexChatBot
 
 
@@ -249,6 +250,27 @@ class _FakeBackend:
         self.cleared.append((thread_key, context))
 
 
+class _FakeSteerBackend:
+    def __init__(self, *, error: Exception | None = None):
+        self.error = error
+        self.steer_calls: list[tuple[str, object]] = []
+
+    async def steer(self, *, thread_key: str, message):
+        self.steer_calls.append((thread_key, message))
+        if self.error is not None:
+            raise self.error
+
+
+class _FakeParticipant:
+    def __init__(self, name: str):
+        self._name = name
+
+    def get_attribute(self, key: str):
+        if key == "name":
+            return self._name
+        return None
+
+
 @pytest.mark.asyncio
 async def test_on_thread_clear_resets_external_thread_id() -> None:
     bot = CodexChatBot(name="codex-test")
@@ -269,3 +291,97 @@ async def test_on_thread_clear_resets_external_thread_id() -> None:
     assert messages.get_attribute("external_thread_id") == ""
     assert bot._external_thread_id_from_thread(thread_context=thread_context) is None
     assert fake_backend.cleared == [("/threads/test", thread_context.session)]
+
+
+@pytest.mark.asyncio
+async def test_on_thread_steer_falls_back_to_chat_when_no_active_turn(
+    monkeypatch,
+) -> None:
+    bot = CodexChatBot(name="codex-test")
+    fake_backend = _FakeSteerBackend(
+        error=CodexAppServerError(
+            "codex thread '/threads/test' has no active turn to steer"
+        )
+    )
+    bot._codex_backend = fake_backend
+
+    thread_context = ChatThreadContext(
+        path="/threads/test",
+        thread=_FakeThread(root=_FakeRoot(messages=_FakeMessagesElement())),  # type: ignore[arg-type]
+        participants=[],
+        session=AgentSessionContext(),
+    )
+    participant = _FakeParticipant("tester@example.com")
+    payload = {"text": "continue", "attachments": []}
+    fallback_calls: list[dict] = []
+
+    async def _fake_chat_received(*, thread_context, from_participant, message):
+        fallback_calls.append(
+            {
+                "path": thread_context.path,
+                "name": from_participant.get_attribute("name"),
+                "message": message,
+            }
+        )
+        return "ok"
+
+    monkeypatch.setattr(bot, "on_chat_received", _fake_chat_received)
+
+    await bot.on_thread_steer(
+        thread_context=thread_context,
+        from_participant=participant,  # type: ignore[arg-type]
+        message=payload,
+    )
+
+    assert fake_backend.steer_calls == [
+        ("/threads/test", [{"type": "text", "text": "continue"}])
+    ]
+    assert fallback_calls == [
+        {
+            "path": "/threads/test",
+            "name": "tester@example.com",
+            "message": payload,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_on_thread_steer_does_not_fallback_when_active_turn_exists(
+    monkeypatch,
+) -> None:
+    bot = CodexChatBot(name="codex-test")
+    fake_backend = _FakeSteerBackend()
+    bot._codex_backend = fake_backend
+
+    thread_context = ChatThreadContext(
+        path="/threads/test",
+        thread=_FakeThread(root=_FakeRoot(messages=_FakeMessagesElement())),  # type: ignore[arg-type]
+        participants=[],
+        session=AgentSessionContext(),
+    )
+    participant = _FakeParticipant("tester@example.com")
+    payload = {"text": "continue", "attachments": []}
+    fallback_calls: list[dict] = []
+
+    async def _fake_chat_received(*, thread_context, from_participant, message):
+        fallback_calls.append(
+            {
+                "path": thread_context.path,
+                "name": from_participant.get_attribute("name"),
+                "message": message,
+            }
+        )
+        return "ok"
+
+    monkeypatch.setattr(bot, "on_chat_received", _fake_chat_received)
+
+    await bot.on_thread_steer(
+        thread_context=thread_context,
+        from_participant=participant,  # type: ignore[arg-type]
+        message=payload,
+    )
+
+    assert fake_backend.steer_calls == [
+        ("/threads/test", [{"type": "text", "text": "continue"}])
+    ]
+    assert fallback_calls == []

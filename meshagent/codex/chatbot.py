@@ -17,7 +17,11 @@ from meshagent.api import RemoteParticipant
 from meshagent.api.specs.service import ContainerMountSpec
 from meshagent.tools import Toolkit, make_toolkits
 
-from .app_server import DEFAULT_CODEX_CONTAINER_MOUNTS, _CodexAppServerBackend
+from .app_server import (
+    DEFAULT_CODEX_CONTAINER_MOUNTS,
+    CodexAppServerError,
+    _CodexAppServerBackend,
+)
 from .thread_adapter import CodexThreadAdapter
 
 logger = logging.getLogger("codex.chatbot")
@@ -820,6 +824,26 @@ class CodexChatBot(ChatBotBase):
         turn_input = await self._message_to_turn_input(
             message=message,
         )
+        try:
+            await self._codex_backend.steer(
+                thread_key=thread_context.path,
+                message=turn_input,
+            )
+        except CodexAppServerError as ex:
+            if "no active turn" not in str(ex).lower():
+                raise
+
+            logger.info(
+                "codex thread '%s' has no active turn to steer; handling as chat",
+                thread_context.path,
+            )
+            await self.on_chat_received(
+                thread_context=thread_context,
+                from_participant=from_participant,
+                message=message,
+            )
+            return
+
         text = message.get("text")
         if not isinstance(text, str):
             text = ""
@@ -827,10 +851,6 @@ class CodexChatBot(ChatBotBase):
             thread_context=thread_context,
             from_participant=from_participant,
             text=text,
-        )
-        await self._codex_backend.steer(
-            thread_key=thread_context.path,
-            message=turn_input,
         )
 
     async def on_chat_received(
