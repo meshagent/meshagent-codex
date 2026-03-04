@@ -140,29 +140,38 @@ class CodexThreadAdapter(ThreadAdapter):
         doc_messages = messages[0]
 
         updates: asyncio.Queue = asyncio.Queue()
+        update_thread_stop = object()
         content_element: Element | None = None
         partial = ""
 
         # Coalesce partial updates to reduce sync churn.
         async def update_thread() -> None:
-            changes: dict[Element, str] = {}
-            try:
+            while True:
+                entry = await updates.get()
+                if entry is update_thread_stop:
+                    break
+
+                element, partial_text = entry
+                changes: dict[Element, str] = {element: partial_text}
+                should_stop = False
                 while True:
                     try:
-                        element, partial_text = updates.get_nowait()
-                        changes[element] = partial_text
+                        pending = updates.get_nowait()
                     except asyncio.QueueEmpty:
-                        for element, partial_text in changes.items():
-                            element["text"] = partial_text
+                        break
 
-                        changes.clear()
+                    if pending is update_thread_stop:
+                        should_stop = True
+                        break
 
-                        element, partial_text = await updates.get()
-                        changes[element] = partial_text
-            except asyncio.QueueShutDown:
-                for element, partial_text in changes.items():
-                    element["text"] = partial_text
-                changes.clear()
+                    pending_element, pending_text = pending
+                    changes[pending_element] = pending_text
+
+                for changed_element, changed_text in changes.items():
+                    changed_element["text"] = changed_text
+
+                if should_stop:
+                    break
 
         def finish_message(*, text: str) -> None:
             nonlocal content_element, partial
@@ -237,7 +246,7 @@ class CodexThreadAdapter(ThreadAdapter):
         except asyncio.QueueShutDown:
             pass
         finally:
-            updates.shutdown()
+            updates.put_nowait(update_thread_stop)
 
         await update_thread_task
 
