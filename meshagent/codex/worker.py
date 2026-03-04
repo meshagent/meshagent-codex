@@ -4,7 +4,9 @@ import logging
 from typing import Optional
 
 from meshagent.agents import AgentSessionContext, LLMAdapter
-from meshagent.agents.worker import Worker
+from meshagent.agents.context import TaskContext
+from meshagent.agents.worker import Worker, InitialMessageMode
+from meshagent.agents.threaded_task_runner import ThreadingMode
 from meshagent.api import Requirement, RoomClient
 from meshagent.api.specs.service import ContainerMountSpec
 from meshagent.tools import Toolkit
@@ -58,6 +60,14 @@ class CodexWorker(Worker):
         skill_dirs: Optional[list[str]] = None,
         supports_context: bool = True,
         annotations: Optional[list[str]] = None,
+        threading_mode: Optional[ThreadingMode] = None,
+        thread_dir: str = ".threads",
+        thread_name_rules: Optional[list[str]] = None,
+        thread_name_adapter: Optional[LLMAdapter] = None,
+        initial_message_mode: InitialMessageMode = "code",
+        initial_message_from: str = "worker",
+        decision_model: Optional[str] = None,
+        decision_llm_adapter: Optional[LLMAdapter] = None,
         model: str = "gpt-5.2-codex",
         command: Optional[str] = None,
         ws_url: Optional[str] = None,
@@ -107,6 +117,14 @@ class CodexWorker(Worker):
             skill_dirs=skill_dirs,
             supports_context=supports_context,
             annotations=annotations,
+            threading_mode=threading_mode,
+            thread_dir=thread_dir,
+            thread_name_rules=thread_name_rules,
+            thread_name_adapter=thread_name_adapter,
+            initial_message_mode=initial_message_mode,
+            initial_message_from=initial_message_from,
+            decision_model=decision_model,
+            decision_llm_adapter=decision_llm_adapter,
         )
 
     def default_model(self) -> str:
@@ -127,25 +145,70 @@ class CodexWorker(Worker):
         message: dict,
         toolkits: list[Toolkit],
     ):
-        await self.append_message_context(message=message, chat_context=chat_context)
-
-        prompt = None
-        if len(chat_context.messages) > 0:
-            content = chat_context.messages[-1].get("content")
-            if isinstance(content, str):
-                prompt = content
-
-        if prompt is None or prompt.strip() == "":
-            prompt = self.get_prompt_for_message(message=message)
+        prompt = self.get_prompt_for_message(message=message)
 
         model = message.get("model", self.default_model())
         if not isinstance(model, str) or model.strip() == "":
             model = self.default_model()
 
-        thread_key = chat_context.id
-        developer_instructions = chat_context.get_system_instructions()
+        task_context = TaskContext(
+            session=chat_context,
+            room=self.room,
+            caller=None,
+            on_behalf_of=None,
+            toolkits=[],
+        )
+
+        adapter_arguments = message
+        thread_path = await self._threading_helper.resolve_thread_path(
+            context=task_context,
+            arguments=message,
+            prompt=prompt,
+            model=model,
+        )
+        if thread_path is not None:
+            adapter_arguments = {
+                **message,
+                "path": thread_path,
+            }
+            await self._threading_helper.record_thread_in_index(
+                context=task_context,
+                path=thread_path,
+            )
+
+        thread_adapter = self._threading_helper.create_thread_adapter(
+            context=task_context,
+            arguments=adapter_arguments,
+            attachment=None,
+        )
+        if thread_adapter is not None:
+            await thread_adapter.start()
+            self._threading_helper.ensure_local_member_on_thread(
+                context=task_context,
+                thread_adapter=thread_adapter,
+            )
+            thread_adapter.append_messages(context=chat_context)
+            initial_message = await self._build_initial_thread_message(
+                message=message,
+                prompt=prompt,
+            )
+            if initial_message is not None:
+                thread_adapter.write_text_message(
+                    text=initial_message,
+                    participant=self._initial_message_from,
+                )
+
+        thread_key = thread_path if thread_path is not None else chat_context.id
+
+        def push(event: dict) -> None:
+            if thread_adapter is not None:
+                thread_adapter.push(event=event)
 
         try:
+            await self.append_message_context(
+                message=message, chat_context=chat_context
+            )
+            developer_instructions = chat_context.get_system_instructions()
             await self._codex_backend.on_thread_open(
                 thread_key=thread_key,
                 room=self.room,
@@ -159,7 +222,7 @@ class CodexWorker(Worker):
                 developer_instructions=developer_instructions,
                 room=self.room,
                 toolkits=toolkits,
-                event_handler=None,
+                event_handler=push if thread_adapter is not None else None,
                 model=model,
                 on_behalf_of=None,
             )
@@ -172,6 +235,9 @@ class CodexWorker(Worker):
                     thread_key,
                     exc_info=ex,
                 )
+            if thread_adapter is not None:
+                with contextlib.suppress(Exception):
+                    await thread_adapter.stop()
 
     async def stop(self):
         try:
