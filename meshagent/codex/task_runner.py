@@ -172,6 +172,10 @@ class CodexTaskRunner(ThreadedTaskRunner):
                 **arguments,
                 "path": selected_path,
             }
+            await self.record_thread_in_index(
+                context=context,
+                path=selected_path,
+            )
 
         selected_path = self._selected_thread_path(arguments=adapter_arguments)
         thread_key = selected_path if selected_path is not None else context.session.id
@@ -183,6 +187,10 @@ class CodexTaskRunner(ThreadedTaskRunner):
         )
         if thread_adapter is not None:
             await thread_adapter.start()
+            self.ensure_local_member_on_thread(
+                context=context,
+                thread_adapter=thread_adapter,
+            )
             thread_adapter.append_messages(context=context.session)
             thread_adapter.write_text_message(
                 text=prompt,

@@ -21,12 +21,83 @@ class _FakeParticipant:
         return None
 
 
+class _FakeElement:
+    def __init__(self, *, tag_name: str, attributes: Optional[dict] = None):
+        self.tag_name = tag_name
+        self._attributes = dict(attributes or {})
+        self._children: list["_FakeElement"] = []
+
+    def get_attribute(self, key: str):
+        return self._attributes.get(key)
+
+    def set_attribute(self, key: str, value) -> None:
+        self._attributes[key] = value
+
+    def get_children(self):
+        return self._children
+
+    def append_child(self, tag_name: str, attributes: Optional[dict] = None):
+        child = _FakeElement(tag_name=tag_name, attributes=attributes)
+        self._children.append(child)
+        return child
+
+
+class _FakeThreadRoot:
+    def __init__(self):
+        self._members = _FakeElement(tag_name="members")
+
+    def get_children_by_tag_name(self, tag_name: str):
+        if tag_name == "members":
+            return [self._members]
+        return []
+
+    @property
+    def members(self) -> _FakeElement:
+        return self._members
+
+
+class _FakeThreadDocument:
+    def __init__(self):
+        self.root = _FakeThreadRoot()
+
+    @property
+    def member_names(self) -> list[str]:
+        names: list[str] = []
+        for child in self.root.members.get_children():
+            if child.tag_name != "member":
+                continue
+            name = child.get_attribute("name")
+            if isinstance(name, str):
+                names.append(name)
+        return names
+
+
+class _FakeThreadListDocument:
+    def __init__(self):
+        self.root = _FakeElement(tag_name="thread_list")
+
+
+class _FakeSync:
+    def __init__(self):
+        self.document = _FakeThreadListDocument()
+        self.open_calls: list[dict] = []
+        self.close_calls: list[str] = []
+
+    async def open(self, *, path: str, schema=None):
+        self.open_calls.append({"path": path, "schema": schema})
+        return self.document
+
+    async def close(self, *, path: str):
+        self.close_calls.append(path)
+
+
 class _FakeRoom:
     def __init__(self):
         self.local_participant = _FakeParticipant(
             name="assistant",
             participant_id="assistant-id",
         )
+        self.sync = _FakeSync()
 
 
 class _FakeBackend:
@@ -151,6 +222,7 @@ class _FakeThreadAdapter:
         self.appended = False
         self.writes: list[tuple[str, str]] = []
         self.events: list[dict] = []
+        self.thread = _FakeThreadDocument()
         _FakeThreadAdapter.instances.append(self)
 
     async def start(self) -> None:
@@ -244,12 +316,15 @@ async def test_task_runner_manual_threading_uses_selected_thread_path(
     assert adapter.started
     assert adapter.appended
     assert adapter.stopped
+    assert adapter.thread.member_names == ["assistant"]
     assert adapter.writes == [("hello", "caller")]
     assert [event["method"] for event in adapter.events] == [
         "item/started",
         "item/agentmessage/delta",
         "item/completed",
     ]
+    assert context.room.sync.open_calls == []
+    assert context.room.sync.close_calls == []
 
 
 @pytest.mark.asyncio
@@ -304,12 +379,21 @@ async def test_task_runner_auto_threading_generates_path(monkeypatch) -> None:
     assert adapter.started
     assert adapter.appended
     assert adapter.stopped
+    assert adapter.thread.member_names == ["assistant"]
     assert adapter.writes == [("Plan the Q1 release milestones", "caller")]
     assert [event["method"] for event in adapter.events] == [
         "item/started",
         "item/agentmessage/delta",
         "item/completed",
     ]
+    assert context.room.sync.open_calls[0]["path"] == "/threads/index.threadl"
+    assert context.room.sync.close_calls == ["/threads/index.threadl"]
+    thread_entries = context.room.sync.document.root.get_children()
+    assert len(thread_entries) == 1
+    assert thread_entries[0].tag_name == "thread"
+    assert (
+        thread_entries[0].get_attribute("path") == "/threads/release-planning-q1.thread"
+    )
 
 
 @pytest.mark.asyncio
