@@ -91,13 +91,24 @@ class _FakeSync:
         self.close_calls.append(path)
 
 
+class _FakeStorage:
+    def __init__(self, *, existing_paths: Optional[set[str]] = None):
+        self._existing_paths = set(existing_paths or set())
+        self.exists_calls: list[str] = []
+
+    async def exists(self, *, path: str) -> bool:
+        self.exists_calls.append(path)
+        return path in self._existing_paths
+
+
 class _FakeRoom:
-    def __init__(self):
+    def __init__(self, *, existing_paths: Optional[set[str]] = None):
         self.local_participant = _FakeParticipant(
             name="assistant",
             participant_id="assistant-id",
         )
         self.sync = _FakeSync()
+        self.storage = _FakeStorage(existing_paths=existing_paths)
 
 
 class _FakeBackend:
