@@ -723,6 +723,97 @@ def test_build_status_event_exec_file_write_sets_preview_for_redirect_after_here
     assert event["preview"] == "const highlights = [];\nexport default highlights;"
 
 
+def test_build_status_event_exec_search_sets_path_and_details() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": '/bin/bash -lc "rg \\"Button|onClick|variant=\\\\\\"ghost\\\\\\"|Timeline|Calendar|Filters|Share|New automation\\" -n /website/src/App.tsx"',
+            }
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Searched /website/src/App.tsx"
+    assert event["path"] == "/website/src/App.tsx"
+    assert event["details"] == [
+        'Pattern: Button|onClick|variant="ghost"|Timeline|Calendar|Filters|Share|New automation'
+    ]
+    assert "preview" not in event
+
+
+def test_build_status_event_exec_search_started_uses_searching_headline() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/started",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": '/bin/bash -lc "rg \\"Button|onClick|variant=\\\\\\"ghost\\\\\\"|Timeline|Calendar|Filters|Share|New automation\\" -n /website/src/App.tsx"',
+            }
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Searching /website/src/App.tsx"
+    assert event["path"] == "/website/src/App.tsx"
+    assert event["details"] == [
+        'Pattern: Button|onClick|variant="ghost"|Timeline|Calendar|Filters|Share|New automation'
+    ]
+
+
+def test_build_status_event_exec_search_multiple_paths_omits_path() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": '/bin/bash -lc "rg \\"foo\\" -n src/App.tsx src/lib.ts"',
+            }
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Searched 2 paths"
+    assert event["details"] == ["Pattern: foo", "Paths: src/App.tsx, src/lib.ts"]
+    assert "path" not in event
+    assert "preview" not in event
+
+
+def test_build_status_event_exec_read_sets_path_and_retained_correlation() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "turn": {"id": "turn-1"},
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"sed -n '200,400p' website/src/App.jsx\"",
+                "commandActions": [{"type": "read", "name": "App.jsx"}],
+            },
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Read website/src/App.jsx"
+    assert event["path"] == "website/src/App.jsx"
+    assert event["details"] == []
+    assert event["correlation_key"] == "turn.explore:turn-1:website/src/App.jsx"
+    assert event["retain_correlation"] is True
+    assert "preview" not in event
+
+
 def test_build_status_event_diff_sets_path_and_structured_preview() -> None:
     backend = _CodexAppServerBackend()
 
@@ -805,6 +896,60 @@ async def test_handle_custom_event_persists_preview_and_path_without_raw_data() 
     assert event_element.get_attribute("path") == "src/main.tsx"
     assert event_element.get_attribute("preview") == preview
     assert event_element.get_attribute("data") is None
+
+
+@pytest.mark.asyncio
+async def test_handle_custom_event_coalesces_repeated_exec_exploration_by_path() -> (
+    None
+):
+    adapter = object.__new__(CodexThreadAdapter)
+    adapter._active_events_by_key = {}
+    adapter._active_reasoning_by_key = {}
+    adapter._persisted_kinds = {
+        "exec",
+        "tool",
+        "collab",
+        "web",
+        "image",
+        "diff",
+        "approval",
+    }
+    messages = _FakeElement(tag_name="messages")
+    backend = _CodexAppServerBackend()
+
+    first_event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "turn": {"id": "turn-1"},
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"sed -n '1,120p' website/src/App.jsx\"",
+                "commandActions": [{"type": "read", "name": "App.jsx"}],
+            },
+        },
+    )
+    second_event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "turn": {"id": "turn-1"},
+            "item": {
+                "id": "item-2",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"sed -n '121,240p' website/src/App.jsx\"",
+                "commandActions": [{"type": "read", "name": "App.jsx"}],
+            },
+        },
+    )
+
+    await adapter.handle_custom_event(messages=messages, event=first_event)
+    await adapter.handle_custom_event(messages=messages, event=second_event)
+
+    assert len(messages.children) == 1
+    event_element = messages.children[0]
+    assert event_element.get_attribute("headline") == "Read website/src/App.jsx"
+    assert event_element.get_attribute("path") == "website/src/App.jsx"
+    assert event_element.get_attribute("item_id") == "item-2"
 
 
 @pytest.mark.asyncio

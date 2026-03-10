@@ -29,6 +29,7 @@ DEFAULT_CODEX_CONTAINER_MOUNTS = ContainerMountSpec(
 JsonRpcId = str | int
 EXEC_FILE_WRITE_PREVIEW_LIMIT = 12000
 DIFF_PREVIEW_LIMIT = 12000
+EXEC_SEARCH_DETAIL_LIMIT = 2000
 _EXEC_FILE_WRITE_HEREDOC_RE = re.compile(
     r"""^\s*cat\s+(?P<redirect>>>?)\s*(?P<path>'[^']+'|"[^"]+"|[^\s]+)\s*<<(?P<quote>['"]?)(?P<marker>[A-Za-z0-9_:\-]+)(?P=quote)\s*\n(?P<content>.*)\n(?P=marker)\s*$""",
     re.DOTALL,
@@ -37,6 +38,55 @@ _EXEC_FILE_WRITE_HEREDOC_REDIRECT_AFTER_RE = re.compile(
     r"""^\s*cat\s+<<(?P<quote>['"]?)(?P<marker>[A-Za-z0-9_:\-]+)(?P=quote)\s*(?P<redirect>>>?)\s*(?P<path>'[^']+'|"[^"]+"|[^\s]+)\s*\n(?P<content>.*)\n(?P=marker)\s*$""",
     re.DOTALL,
 )
+_EXEC_SEARCH_COMMANDS = {"rg", "grep", "egrep", "fgrep"}
+_EXEC_READ_COMMANDS = {"bat", "cat", "head", "less", "more", "sed", "tail"}
+_EXEC_LIST_COMMANDS = {"ls", "tree"}
+_EXEC_SEARCH_QUERY_FLAGS = {"-e", "--regexp"}
+_EXEC_SEARCH_SHORT_VALUE_FLAGS = {
+    "-A",
+    "-B",
+    "-C",
+    "-D",
+    "-M",
+    "-T",
+    "-f",
+    "-g",
+    "-j",
+    "-m",
+    "-t",
+}
+_EXEC_READ_VALUE_FLAGS = {"-c", "-e", "-f", "-n"}
+_EXEC_LIST_VALUE_FLAGS = {"-I", "--ignore"}
+_EXEC_SEARCH_LONG_VALUE_FLAGS = {
+    "--binary-files",
+    "--color",
+    "--colors",
+    "--context",
+    "--context-separator",
+    "--devices",
+    "--directories",
+    "--encoding",
+    "--engine",
+    "--exclude",
+    "--exclude-dir",
+    "--file",
+    "--glob",
+    "--include",
+    "--label",
+    "--max-columns",
+    "--max-count",
+    "--max-filesize",
+    "--path-separator",
+    "--pre",
+    "--pre-glob",
+    "--replace",
+    "--sort",
+    "--sortr",
+    "--threads",
+    "--type",
+    "--type-add",
+    "--type-not",
+}
 
 
 @dataclass(frozen=True)
@@ -54,6 +104,24 @@ class _DiffChangePreview:
     added: int
     removed: int
     diff: str
+
+
+@dataclass(frozen=True)
+class _ExecSearchPreview:
+    query: str
+    paths: tuple[str, ...]
+
+    @property
+    def path(self) -> str:
+        if len(self.paths) == 1:
+            return self.paths[0]
+        return ""
+
+
+@dataclass(frozen=True)
+class _ExecExplorationPreview:
+    action: str
+    path: str
 
 
 class CodexAppServerError(RoomException):
@@ -2277,19 +2345,18 @@ class _CodexAppServerBackend:
 
         return None
 
-    def _extract_exec_action_details(self, *, item: dict) -> list[str]:
+    def _exec_actions(self, *, item: dict) -> list[dict]:
         raw_actions = item.get("commandActions")
         if not isinstance(raw_actions, list):
             raw_actions = item.get("command_actions")
         if not isinstance(raw_actions, list):
             return []
+        return [action for action in raw_actions if isinstance(action, dict)]
 
+    def _extract_exec_action_details(self, *, item: dict) -> list[str]:
         details: list[str] = []
         seen: set[str] = set()
-        for action in raw_actions:
-            if not isinstance(action, dict):
-                continue
-
+        for action in self._exec_actions(item=item):
             detail = self._command_action_detail(action=action)
             if detail is None:
                 continue
@@ -2301,6 +2368,139 @@ class _CodexAppServerBackend:
             details.append(detail)
 
         return details
+
+    def _exec_positional_tokens(
+        self,
+        *,
+        argv: list[str],
+        value_flags: set[str],
+    ) -> list[str]:
+        tokens: list[str] = []
+        after_separator = False
+        index = 1
+        while index < len(argv):
+            token = argv[index]
+            if not after_separator and token == "--":
+                after_separator = True
+                index += 1
+                continue
+
+            if not after_separator and token in value_flags:
+                index += 2
+                continue
+
+            if not after_separator and token.startswith("--") and "=" in token:
+                index += 1
+                continue
+
+            if not after_separator and token.startswith("-") and token != "-":
+                index += 1
+                continue
+
+            tokens.append(token)
+            index += 1
+
+        return tokens
+
+    def _select_exec_target_path(
+        self,
+        *,
+        candidate: str,
+        hint: str,
+    ) -> str:
+        normalized_hint = hint.strip()
+        normalized_candidate = candidate.strip()
+        if normalized_candidate != "":
+            if normalized_hint == "":
+                return normalized_candidate
+            if normalized_candidate == normalized_hint:
+                return normalized_candidate
+            if Path(normalized_candidate).name == Path(normalized_hint).name:
+                return normalized_candidate
+        return normalized_hint
+
+    def _exec_read_path_from_argv(self, *, argv: list[str]) -> str:
+        if len(argv) == 0:
+            return ""
+
+        executable = Path(argv[0]).name.lower()
+        if executable == "sed":
+            tokens = self._exec_positional_tokens(
+                argv=argv,
+                value_flags={"-e", "-f"},
+            )
+            if len(tokens) >= 2:
+                return tokens[-1]
+            return ""
+
+        if executable in {"head", "tail"}:
+            tokens = self._exec_positional_tokens(
+                argv=argv,
+                value_flags=_EXEC_READ_VALUE_FLAGS,
+            )
+            if len(tokens) == 1:
+                return tokens[0]
+            return ""
+
+        if executable in _EXEC_READ_COMMANDS:
+            tokens = self._exec_positional_tokens(
+                argv=argv,
+                value_flags=set(),
+            )
+            if len(tokens) == 1:
+                return tokens[0]
+            return ""
+
+        return ""
+
+    def _exec_list_path_from_argv(self, *, argv: list[str]) -> str:
+        if len(argv) == 0:
+            return ""
+
+        executable = Path(argv[0]).name.lower()
+        if executable not in _EXEC_LIST_COMMANDS:
+            return ""
+
+        tokens = self._exec_positional_tokens(
+            argv=argv,
+            value_flags=_EXEC_LIST_VALUE_FLAGS,
+        )
+        if len(tokens) == 1:
+            return tokens[0]
+        return ""
+
+    def _exec_target_path_from_command(
+        self,
+        *,
+        item: dict,
+        action: str,
+        hint: str,
+    ) -> str:
+        command = self._extract_exec_command(item=item)
+        if command == "":
+            return hint.strip()
+
+        script = self._extract_exec_script(command=command)
+        if script == "":
+            return hint.strip()
+
+        with contextlib.suppress(ValueError):
+            argv = shlex.split(script)
+            if len(argv) == 0:
+                return hint.strip()
+
+            candidate = ""
+            if action == "read":
+                candidate = self._exec_read_path_from_argv(argv=argv)
+            elif action == "list":
+                candidate = self._exec_list_path_from_argv(argv=argv)
+
+            return self._select_exec_target_path(
+                candidate=candidate,
+                hint=hint,
+            )
+
+        return hint.strip()
 
     def _is_shell_command_flag(self, *, token: str) -> bool:
         if not isinstance(token, str) or len(token) <= 1 or not token.startswith("-"):
@@ -2377,6 +2577,246 @@ class _CodexAppServerBackend:
             append=match.group("redirect") == ">>",
         )
 
+    def _exec_search_option_parts(self, *, token: str) -> tuple[str, str | None]:
+        if token.startswith("--") and "=" in token:
+            flag, _, value = token.partition("=")
+            return flag, value
+        return token, None
+
+    def _is_exec_search_short_value_flag(self, *, token: str) -> bool:
+        if len(token) <= 2 or not token.startswith("-") or token.startswith("--"):
+            return False
+        return token[:2] in _EXEC_SEARCH_SHORT_VALUE_FLAGS
+
+    def _extract_exec_search_preview(
+        self,
+        *,
+        item: dict,
+    ) -> Optional[_ExecSearchPreview]:
+        command = self._extract_exec_command(item=item)
+        if command == "":
+            return None
+
+        script = self._extract_exec_script(command=command)
+        if script == "":
+            return None
+
+        with contextlib.suppress(ValueError):
+            argv = shlex.split(script)
+            if len(argv) == 0:
+                return None
+
+            if any(token in {"|", "&&", "||", ";"} for token in argv[1:]):
+                return None
+
+            executable = Path(argv[0]).name.lower()
+            if executable not in _EXEC_SEARCH_COMMANDS:
+                return None
+
+            query = ""
+            paths: list[str] = []
+            after_separator = False
+            index = 1
+            while index < len(argv):
+                token = argv[index]
+                if not after_separator and token == "--":
+                    after_separator = True
+                    index += 1
+                    continue
+
+                flag, attached_value = self._exec_search_option_parts(token=token)
+                if not after_separator and flag in _EXEC_SEARCH_QUERY_FLAGS:
+                    if attached_value is not None and attached_value != "":
+                        if query == "":
+                            query = attached_value
+                        index += 1
+                        continue
+                    if index + 1 >= len(argv):
+                        return None
+                    if query == "":
+                        query = argv[index + 1]
+                    index += 2
+                    continue
+
+                if not after_separator and token.startswith("-e") and token != "-e":
+                    if query == "":
+                        query = token[2:]
+                    index += 1
+                    continue
+
+                if not after_separator and flag in _EXEC_SEARCH_LONG_VALUE_FLAGS:
+                    index += 1 if attached_value is not None else 2
+                    continue
+
+                if not after_separator and self._is_exec_search_short_value_flag(
+                    token=token
+                ):
+                    index += 1
+                    continue
+
+                if not after_separator and token.startswith("-") and token != "-":
+                    index += 1
+                    continue
+
+                if query == "":
+                    query = token
+                else:
+                    paths.append(token)
+                index += 1
+
+            query = query.strip()
+            normalized_paths = tuple(
+                path.strip()
+                for path in paths
+                if isinstance(path, str) and path.strip() != ""
+            )
+            if query == "":
+                return None
+            return _ExecSearchPreview(query=query, paths=normalized_paths)
+
+        return None
+
+    def _extract_exec_exploration_preview(
+        self,
+        *,
+        item: dict,
+    ) -> Optional[_ExecExplorationPreview]:
+        for action in self._exec_actions(item=item):
+            type_name = action.get("type")
+            if not isinstance(type_name, str):
+                continue
+
+            normalized = self._normalize_name(value=type_name)
+            if normalized == "read":
+                hint = self._first_text(source=action, keys=("path", "name"))
+                path = self._exec_target_path_from_command(
+                    item=item,
+                    action="read",
+                    hint=hint,
+                )
+                if path != "":
+                    return _ExecExplorationPreview(action="read", path=path)
+
+            if normalized == "listfiles":
+                hint = self._first_text(source=action, keys=("path",))
+                path = self._exec_target_path_from_command(
+                    item=item,
+                    action="list",
+                    hint=hint,
+                )
+                if path != "":
+                    return _ExecExplorationPreview(action="list", path=path)
+
+        return None
+
+    def _exec_search_target(self, *, search_preview: _ExecSearchPreview) -> str:
+        if search_preview.path != "":
+            return search_preview.path
+        if len(search_preview.paths) > 1:
+            return f"{len(search_preview.paths)} paths"
+        return search_preview.query
+
+    def _exec_search_headline(
+        self,
+        *,
+        status: str,
+        search_preview: _ExecSearchPreview,
+    ) -> str:
+        target = self._exec_search_target(search_preview=search_preview)
+        uses_query_as_target = (
+            search_preview.path == "" and len(search_preview.paths) == 0
+        )
+        if status == "failed":
+            text = (
+                f"Search Failed for {target}"
+                if uses_query_as_target
+                else f"Search Failed: {target}"
+            )
+        elif status == "cancelled":
+            text = (
+                f"Search Cancelled for {target}"
+                if uses_query_as_target
+                else f"Search Cancelled: {target}"
+            )
+        elif self._is_active_state(state=status):
+            text = (
+                f"Searching for {target}"
+                if uses_query_as_target
+                else f"Searching {target}"
+            )
+        elif status == "completed":
+            text = (
+                f"Searched for {target}"
+                if uses_query_as_target
+                else f"Searched {target}"
+            )
+        else:
+            text = (
+                f"Search for {target}" if uses_query_as_target else f"Search {target}"
+            )
+        return self._truncate_text(text=text, limit=280)
+
+    def _exec_search_details(
+        self,
+        *,
+        search_preview: _ExecSearchPreview,
+    ) -> list[str]:
+        details: list[str] = []
+        if search_preview.path != "" or len(search_preview.paths) > 1:
+            details.append(
+                self._truncate_text(
+                    text=f"Pattern: {search_preview.query}",
+                    limit=EXEC_SEARCH_DETAIL_LIMIT,
+                )
+            )
+        if len(search_preview.paths) > 1:
+            details.append(
+                self._truncate_text(
+                    text="Paths: " + ", ".join(search_preview.paths),
+                    limit=EXEC_SEARCH_DETAIL_LIMIT,
+                )
+            )
+        return details
+
+    def _exec_exploration_headline(
+        self,
+        *,
+        status: str,
+        exploration_preview: _ExecExplorationPreview,
+    ) -> str:
+        path = exploration_preview.path
+        if exploration_preview.action == "read":
+            if status == "failed":
+                return f"Read Failed: {path}"
+            if status == "cancelled":
+                return f"Read Cancelled: {path}"
+            if self._is_active_state(state=status):
+                return f"Reading {path}"
+            if status == "completed":
+                return f"Read {path}"
+            return f"Read {path}"
+
+        if exploration_preview.action == "list":
+            if status == "failed":
+                return f"List Failed: {path}"
+            if status == "cancelled":
+                return f"List Cancelled: {path}"
+            if self._is_active_state(state=status):
+                return f"Listing {path}"
+            if status == "completed":
+                return f"Listed {path}"
+            return f"List {path}"
+
+        if status == "failed":
+            return f"Exploration Failed: {path}"
+        if status == "cancelled":
+            return f"Exploration Cancelled: {path}"
+        if self._is_active_state(state=status):
+            return f"Exploring {path}"
+        if status == "completed":
+            return f"Explored {path}"
+        return f"Explore {path}"
+
     def _file_write_headline(
         self,
         *,
@@ -2423,11 +2863,23 @@ class _CodexAppServerBackend:
         status: str,
         item: dict,
         file_write_preview: Optional[_ExecFileWritePreview] = None,
+        search_preview: Optional[_ExecSearchPreview] = None,
+        exploration_preview: Optional[_ExecExplorationPreview] = None,
     ) -> tuple[Optional[str], list[str]]:
         if file_write_preview is not None:
             return self._file_write_headline(
                 status=status,
                 file_write_preview=file_write_preview,
+            ), []
+        if search_preview is not None:
+            return self._exec_search_headline(
+                status=status,
+                search_preview=search_preview,
+            ), self._exec_search_details(search_preview=search_preview)
+        if exploration_preview is not None:
+            return self._exec_exploration_headline(
+                status=status,
+                exploration_preview=exploration_preview,
             ), []
 
         command = self._extract_exec_command(item=item)
@@ -2542,7 +2994,20 @@ class _CodexAppServerBackend:
         status: str,
         item: dict,
         headline: Optional[str],
+        search_preview: Optional[_ExecSearchPreview] = None,
+        exploration_preview: Optional[_ExecExplorationPreview] = None,
     ) -> Optional[str]:
+        if search_preview is not None:
+            return self._exec_search_headline(
+                status=status,
+                search_preview=search_preview,
+            )
+        if exploration_preview is not None:
+            return self._exec_exploration_headline(
+                status=status,
+                exploration_preview=exploration_preview,
+            )
+
         action_details = self._extract_exec_action_details(item=item)
         for detail in action_details:
             text = detail.strip()
@@ -2736,6 +3201,8 @@ class _CodexAppServerBackend:
         kind: str,
         item: dict,
         file_write_preview: Optional[_ExecFileWritePreview] = None,
+        search_preview: Optional[_ExecSearchPreview] = None,
+        exploration_preview: Optional[_ExecExplorationPreview] = None,
         diff_changes: Optional[list[_DiffChangePreview]] = None,
     ) -> tuple[Optional[str], list[str]]:
         if kind == "plan" and method.lower().startswith("turn/plan/"):
@@ -2750,6 +3217,8 @@ class _CodexAppServerBackend:
                 status=status,
                 item=item,
                 file_write_preview=file_write_preview,
+                search_preview=search_preview,
+                exploration_preview=exploration_preview,
             )
 
         if kind == "reasoning":
@@ -3058,6 +3527,18 @@ class _CodexAppServerBackend:
         )
         return turn_id, item_id
 
+    def _exploration_event_path(
+        self,
+        *,
+        search_preview: Optional[_ExecSearchPreview],
+        exploration_preview: Optional[_ExecExplorationPreview],
+    ) -> str:
+        if search_preview is not None and search_preview.path != "":
+            return search_preview.path
+        if exploration_preview is not None:
+            return exploration_preview.path
+        return ""
+
     def _event_key(
         self,
         *,
@@ -3136,11 +3617,17 @@ class _CodexAppServerBackend:
         item_type = _item_type(item)
         kind = self._event_kind(method=method, item_type=item_type)
         file_write_preview = None
+        search_preview = None
+        exploration_preview = None
         diff_changes: Optional[list[_DiffChangePreview]] = None
         diff_path = ""
         diff_preview = ""
         if kind == "exec":
             file_write_preview = self._extract_exec_file_write_preview(item=item)
+            if file_write_preview is None:
+                search_preview = self._extract_exec_search_preview(item=item)
+            if file_write_preview is None and search_preview is None:
+                exploration_preview = self._extract_exec_exploration_preview(item=item)
         elif kind == "diff":
             diff_changes = self._parse_diff_changes(item=item)
             diff_path = self._diff_event_path(changes=diff_changes)
@@ -3150,6 +3637,14 @@ class _CodexAppServerBackend:
             turn_id=turn_id,
             item_id=item_id,
         )
+        retain_correlation = False
+        exploration_path = self._exploration_event_path(
+            search_preview=search_preview,
+            exploration_preview=exploration_preview,
+        )
+        if kind == "exec" and turn_id is not None and exploration_path != "":
+            correlation_key = f"turn.explore:{turn_id}:{exploration_path}"
+            retain_correlation = True
         headline, detail_lines = self._event_display(
             method=method,
             params=params,
@@ -3157,6 +3652,8 @@ class _CodexAppServerBackend:
             kind=kind,
             item=item,
             file_write_preview=file_write_preview,
+            search_preview=search_preview,
+            exploration_preview=exploration_preview,
             diff_changes=diff_changes,
         )
         summary = self._status_summary(
@@ -3169,6 +3666,8 @@ class _CodexAppServerBackend:
                 status=status,
                 item=item,
                 headline=headline,
+                search_preview=search_preview,
+                exploration_preview=exploration_preview,
             )
             if exec_summary is not None:
                 summary = exec_summary
@@ -3198,10 +3697,17 @@ class _CodexAppServerBackend:
             "summary": summary,
             "data": self._stringify_status_payload(value=params),
         }
+        if retain_correlation:
+            event["retain_correlation"] = True
         if file_write_preview is not None:
             event["path"] = file_write_preview.path
             if file_write_preview.preview != "":
                 event["preview"] = file_write_preview.preview
+        elif search_preview is not None:
+            if search_preview.path != "":
+                event["path"] = search_preview.path
+        elif exploration_preview is not None:
+            event["path"] = exploration_preview.path
         elif kind == "diff":
             if diff_path != "":
                 event["path"] = diff_path
