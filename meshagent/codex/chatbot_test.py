@@ -106,6 +106,52 @@ async def test_on_thread_cancel_clears_status_when_no_active_turn(
     assert "/threads/test" not in bot._cancelling_threads
 
 
+@pytest.mark.asyncio
+async def test_on_thread_cancel_rechecks_status_after_backend_cancel(
+    monkeypatch,
+) -> None:
+    bot = CodexChatBot(name="codex-test")
+    fake_backend = _FakeCancelBackend(
+        active_turn=True,
+        active_turn_after_cancel=False,
+    )
+    bot._codex_backend = fake_backend
+
+    updates: list[tuple[str, str | None, str | None]] = []
+    clears: list[str] = []
+    cancelled_approvals: list[str] = []
+
+    async def _capture_set(
+        *, path: str, status: str | None, mode: str | None = None
+    ) -> None:
+        updates.append((path, status, mode))
+
+    async def _capture_clear(*, path: str) -> None:
+        clears.append(path)
+
+    async def _capture_cancel_approvals(*, thread_key: str) -> None:
+        cancelled_approvals.append(thread_key)
+
+    monkeypatch.setattr(bot, "set_thread_status", _capture_set)
+    monkeypatch.setattr(bot, "clear_thread_status", _capture_clear)
+    monkeypatch.setattr(bot, "_cancel_all_pending_approvals", _capture_cancel_approvals)
+
+    thread_context = ChatThreadContext(
+        path="/threads/test",
+        thread=_FakeThread(root=_FakeRoot(messages=_FakeMessagesElement())),  # type: ignore[arg-type]
+        participants=[],
+        session=AgentSessionContext(),
+    )
+
+    await bot.on_thread_cancel(thread_context=thread_context)
+
+    assert updates == [("/threads/test", "Cancelling", "busy")]
+    assert clears == ["/threads/test"]
+    assert cancelled_approvals == ["/threads/test"]
+    assert fake_backend.cancelled == ["/threads/test"]
+    assert "/threads/test" not in bot._cancelling_threads
+
+
 def test_status_events_do_not_override_cancelling_status(monkeypatch) -> None:
     bot = CodexChatBot(name="codex-test")
     path = "/threads/test"
@@ -468,9 +514,29 @@ class _FakeBackend:
         self.cleared.append((thread_key, context))
 
 
+class _FailingClearBackend:
+    async def on_thread_clear(
+        self,
+        *,
+        thread_key: str,
+        context: AgentSessionContext,
+    ) -> None:
+        del thread_key
+        del context
+        raise RuntimeError("clear failed")
+
+
 class _FakeCancelBackend:
-    def __init__(self, *, active_turn: bool):
+    def __init__(
+        self,
+        *,
+        active_turn: bool,
+        active_turn_after_cancel: bool | None = None,
+    ):
         self._active_turn = active_turn
+        if active_turn_after_cancel is None:
+            active_turn_after_cancel = active_turn
+        self._active_turn_after_cancel = active_turn_after_cancel
         self.cancelled: list[str] = []
 
     def has_active_turn(self, *, thread_key: str) -> bool:
@@ -479,6 +545,7 @@ class _FakeCancelBackend:
 
     async def on_thread_cancel(self, *, thread_key: str) -> None:
         self.cancelled.append(thread_key)
+        self._active_turn = self._active_turn_after_cancel
 
 
 class _FakeSteerBackend:
@@ -541,6 +608,36 @@ async def test_on_thread_clear_resets_external_thread_id() -> None:
     assert messages.get_attribute("external_thread_id") == ""
     assert bot._external_thread_id_from_thread(thread_context=thread_context) is None
     assert fake_backend.cleared == [("/threads/test", thread_context.session)]
+
+
+@pytest.mark.asyncio
+async def test_on_thread_clear_does_not_clear_ui_state_before_backend_succeeds(
+    monkeypatch,
+) -> None:
+    bot = CodexChatBot(name="codex-test")
+    bot._codex_backend = _FailingClearBackend()
+
+    clears: list[str] = []
+
+    async def _capture_clear(*, path: str) -> None:
+        clears.append(path)
+
+    monkeypatch.setattr(bot, "clear_thread_status", _capture_clear)
+
+    messages = _FakeMessagesElement()
+    messages.set_attribute("external_thread_id", "thread-123")
+    thread_context = ChatThreadContext(
+        path="/threads/test",
+        thread=_FakeThread(root=_FakeRoot(messages=messages)),  # type: ignore[arg-type]
+        participants=[],
+        session=AgentSessionContext(),
+    )
+
+    with pytest.raises(RuntimeError, match="clear failed"):
+        await bot.on_thread_clear(thread_context=thread_context)
+
+    assert clears == []
+    assert messages.get_attribute("external_thread_id") == "thread-123"
 
 
 @pytest.mark.asyncio

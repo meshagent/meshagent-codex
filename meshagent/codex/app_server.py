@@ -56,6 +56,42 @@ class CodexAppServerError(RoomException):
     pass
 
 
+class _JsonRpcPendingRequest:
+    def __init__(
+        self,
+        *,
+        request_id: JsonRpcId,
+        future: asyncio.Future[Any],
+        pending: dict[JsonRpcId, asyncio.Future[Any]],
+    ):
+        self.request_id = request_id
+        self.future = future
+        self._pending = pending
+        self._released = False
+
+    async def wait(self) -> Any:
+        try:
+            return await self.future
+        finally:
+            self.abandon()
+
+    def abandon(self) -> None:
+        if self._released:
+            return
+
+        self._released = True
+        self._pending.pop(self.request_id, None)
+
+        if self.future.done():
+            if self.future.cancelled():
+                return
+            with contextlib.suppress(Exception):
+                self.future.result()
+            return
+
+        self.future.cancel()
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -226,7 +262,7 @@ class _CodexJsonRpcSession:
         self._forward_stdout = forward_stdout
         self._forward_stderr = forward_stderr
         self._verbose_rpc = verbose_rpc
-        self._request_timeout_s = request_timeout_s
+        del request_timeout_s
         self._server_request_handler = server_request_handler
 
         self._process: Optional[asyncio.subprocess.Process] = None
@@ -599,6 +635,18 @@ class _CodexJsonRpcSession:
     async def request(self, *, method: str, params: Optional[dict] = None) -> Any:
         return await self._request(method=method, params=params, ensure_started=True)
 
+    async def begin_request(
+        self,
+        *,
+        method: str,
+        params: Optional[dict] = None,
+    ) -> _JsonRpcPendingRequest:
+        return await self._begin_request(
+            method=method,
+            params=params,
+            ensure_started=True,
+        )
+
     async def notify(self, *, method: str, params: Optional[dict] = None) -> None:
         await self._notify(method=method, params=params, ensure_started=True)
 
@@ -613,6 +661,20 @@ class _CodexJsonRpcSession:
         params: Optional[dict] = None,
         ensure_started: bool,
     ) -> Any:
+        pending = await self._begin_request(
+            method=method,
+            params=params,
+            ensure_started=ensure_started,
+        )
+        return await pending.wait()
+
+    async def _begin_request(
+        self,
+        *,
+        method: str,
+        params: Optional[dict] = None,
+        ensure_started: bool,
+    ) -> _JsonRpcPendingRequest:
         if ensure_started:
             await self.start()
 
@@ -623,19 +685,25 @@ class _CodexJsonRpcSession:
         future = loop.create_future()
         self._pending[request_id] = future
 
-        await self._send_json(
-            {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": method,
-                "params": params or {},
-            }
-        )
-
         try:
-            return await asyncio.wait_for(future, timeout=self._request_timeout_s)
-        finally:
+            await self._send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params or {},
+                }
+            )
+        except Exception:
             self._pending.pop(request_id, None)
+            future.cancel()
+            raise
+
+        return _JsonRpcPendingRequest(
+            request_id=request_id,
+            future=future,
+            pending=self._pending,
+        )
 
     async def _notify(
         self,
@@ -667,15 +735,7 @@ class _CodexJsonRpcSession:
         if self._container_exec is not None:
             encoded = (json.dumps(payload) + "\n").encode("utf-8")
             async with self._write_lock:
-                try:
-                    await asyncio.wait_for(
-                        self._container_exec.write(encoded),
-                        timeout=min(30.0, self._request_timeout_s),
-                    )
-                except asyncio.TimeoutError as exc:
-                    raise CodexAppServerError(
-                        "timed out writing to codex app-server container stdin"
-                    ) from exc
+                await self._container_exec.write(encoded)
             return
 
         if self._process is None or self._process.stdin is None:
@@ -1021,7 +1081,6 @@ class _CodexAppServerBackend:
         self._approval_policy = approval_policy
         self._sandbox_policy = sandbox_policy
         self._approval_request_handler = approval_request_handler
-        self._request_timeout_s = request_timeout_s
 
         launch_env = os.environ.copy()
         if env is not None:
@@ -1042,15 +1101,22 @@ class _CodexAppServerBackend:
             request_timeout_s=request_timeout_s,
             server_request_handler=self._handle_server_request,
         )
+        del request_timeout_s
         self._router_start_lock = asyncio.Lock()
         self._router_route_lock = asyncio.Lock()
         self._router_task: Optional[asyncio.Task] = None
         self._router_error: Optional[Exception] = None
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         self._turn_queues: dict[tuple[str, str], asyncio.Queue[dict]] = {}
         self._pending_turn_notifications: dict[tuple[str, str], deque[dict]] = {}
+        self._pending_turn_start_waiters: dict[str, deque[asyncio.Future[str]]] = {}
+        self._terminal_turn_notifications: set[tuple[str, str]] = set()
         self._thread_states: dict[str, _CodexThreadState] = {}
         self._thread_keys_by_thread_id: dict[str, str] = {}
         self._active_turns: dict[str, set[tuple[str, str]]] = {}
+        self._pending_turn_starts: dict[str, int] = {}
+        self._interrupt_requested_threads: set[str] = set()
+        self._interrupt_requests_in_flight: set[tuple[str, str]] = set()
 
     def _normalized_sandbox_mode(self) -> Optional[str]:
         raw = self._sandbox_policy
@@ -1081,6 +1147,14 @@ class _CodexAppServerBackend:
         }
 
     async def close(self) -> None:
+        background_tasks = list(self._background_tasks)
+        for task in background_tasks:
+            task.cancel()
+        for task in background_tasks:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        self._background_tasks.clear()
+
         if self._router_task is not None:
             self._router_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -1090,10 +1164,15 @@ class _CodexAppServerBackend:
         async with self._router_route_lock:
             self._turn_queues.clear()
             self._pending_turn_notifications.clear()
+            self._pending_turn_start_waiters.clear()
+            self._terminal_turn_notifications.clear()
 
         self._thread_states.clear()
         self._thread_keys_by_thread_id.clear()
         self._active_turns.clear()
+        self._pending_turn_starts.clear()
+        self._interrupt_requested_threads.clear()
+        self._interrupt_requests_in_flight.clear()
 
         self._router_error = None
         await self._session.close()
@@ -1183,6 +1262,13 @@ class _CodexAppServerBackend:
         if previous is not None:
             self._thread_keys_by_thread_id.pop(previous.thread_id, None)
 
+        active_turns = list(self._active_turns.pop(thread_key, set()))
+        for thread_id, turn_id in active_turns:
+            self._interrupt_requests_in_flight.discard((thread_id, turn_id))
+
+        self._pending_turn_starts.pop(thread_key, None)
+        self._interrupt_requested_threads.discard(thread_key)
+
     async def _thread_key_for_thread_id(self, *, thread_id: str) -> Optional[str]:
         thread_key = self._thread_keys_by_thread_id.get(thread_id)
         if thread_key is not None:
@@ -1194,6 +1280,93 @@ class _CodexAppServerBackend:
                 return key
 
         return None
+
+    def _track_background_task(
+        self,
+        *,
+        coroutine: Awaitable[Any],
+        description: str,
+        cleanup: Optional[Callable[[], None]] = None,
+    ) -> None:
+        task = asyncio.create_task(coroutine)
+        self._background_tasks.add(task)
+
+        def _on_done(completed: asyncio.Task[Any]) -> None:
+            self._background_tasks.discard(completed)
+            if cleanup is not None:
+                with contextlib.suppress(Exception):
+                    cleanup()
+            try:
+                completed.result()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.warning(description, exc_info=exc)
+
+        task.add_done_callback(_on_done)
+
+    def _track_pending_turn_start(self, *, thread_key: str) -> None:
+        self._pending_turn_starts[thread_key] = (
+            self._pending_turn_starts.get(thread_key, 0) + 1
+        )
+
+    def _untrack_pending_turn_start(self, *, thread_key: str) -> None:
+        count = self._pending_turn_starts.get(thread_key)
+        if count is None:
+            return
+        if count <= 1:
+            self._pending_turn_starts.pop(thread_key, None)
+            return
+        self._pending_turn_starts[thread_key] = count - 1
+
+    def _register_pending_turn_start_waiter(
+        self,
+        *,
+        thread_id: str,
+    ) -> asyncio.Future[str]:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+        waiters = self._pending_turn_start_waiters.get(thread_id)
+        if waiters is None:
+            waiters = deque()
+            self._pending_turn_start_waiters[thread_id] = waiters
+        waiters.append(future)
+        return future
+
+    def _resolve_pending_turn_start_waiter(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+    ) -> None:
+        waiters = self._pending_turn_start_waiters.get(thread_id)
+        if waiters is None:
+            return
+
+        while waiters:
+            waiter = waiters.popleft()
+            if waiter.done():
+                continue
+            waiter.set_result(turn_id)
+            break
+
+        if len(waiters) == 0:
+            self._pending_turn_start_waiters.pop(thread_id, None)
+
+    def _unregister_pending_turn_start_waiter(
+        self,
+        *,
+        thread_id: str,
+        waiter: asyncio.Future[str],
+    ) -> None:
+        waiters = self._pending_turn_start_waiters.get(thread_id)
+        if waiters is None:
+            return
+
+        with contextlib.suppress(ValueError):
+            waiters.remove(waiter)
+        if len(waiters) == 0:
+            self._pending_turn_start_waiters.pop(thread_id, None)
 
     def _normalize_approval_decision(self, *, decision: Any) -> str:
         if isinstance(decision, str):
@@ -1363,13 +1536,30 @@ class _CodexAppServerBackend:
 
     async def on_thread_cancel(self, *, thread_key: str) -> None:
         active_turns = list(self._active_turns.get(thread_key, set()))
+        if len(active_turns) == 0:
+            if self._pending_turn_starts.get(thread_key, 0) > 0:
+                self._interrupt_requested_threads.add(thread_key)
+            else:
+                self._interrupt_requested_threads.discard(thread_key)
+            return
 
+        failures: list[Exception] = []
         for thread_id, turn_id in active_turns:
-            with contextlib.suppress(Exception):
-                await self._session.request(
-                    method="turn/interrupt",
-                    params={"threadId": thread_id, "turnId": turn_id},
+            try:
+                await self._request_turn_interrupt_detached(
+                    thread_key=thread_key,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
                 )
+            except Exception as exc:
+                failures.append(exc)
+
+        if len(failures) == 1:
+            raise failures[0]
+        if len(failures) > 1:
+            raise CodexAppServerError(
+                f"failed to interrupt {len(failures)} codex turns"
+            )
 
     async def on_thread_close(self, *, thread_key: str) -> None:
         await self.on_thread_cancel(thread_key=thread_key)
@@ -1377,7 +1567,10 @@ class _CodexAppServerBackend:
 
     def has_active_turn(self, *, thread_key: str) -> bool:
         active_turns = self._active_turns.get(thread_key)
-        return active_turns is not None and len(active_turns) > 0
+        if active_turns is not None and len(active_turns) > 0:
+            return True
+
+        return self._pending_turn_starts.get(thread_key, 0) > 0
 
     async def _active_turn_id_for_thread(
         self, *, thread_key: str, thread_id: str
@@ -1518,6 +1711,64 @@ class _CodexAppServerBackend:
 
         return thread_id, turn_id
 
+    def _is_terminal_turn_notification(self, *, method: Optional[str]) -> bool:
+        if not isinstance(method, str):
+            return False
+
+        return method.lower() in (
+            "turn/completed",
+            "turn/cancelled",
+            "turn/canceled",
+            "turn/interrupted",
+            "turn/aborted",
+        )
+
+    def _notification_tracks_active_turn(
+        self,
+        *,
+        method: Optional[str],
+        params: dict,
+    ) -> bool:
+        if not isinstance(method, str):
+            return False
+        if self._is_terminal_turn_notification(method=method):
+            return False
+
+        lower = method.lower()
+        if lower == "codex/event/task_complete":
+            return True
+
+        status = self._status_from_notification(method=method, params=params)
+        return status in ("queued", "in_progress")
+
+    async def _request_turn_interrupt_detached(
+        self,
+        *,
+        thread_key: str,
+        thread_id: str,
+        turn_id: str,
+    ) -> None:
+        key = (thread_id, turn_id)
+        if key in self._interrupt_requests_in_flight:
+            self._interrupt_requested_threads.discard(thread_key)
+            return
+
+        pending = await self._session.begin_request(
+            method="turn/interrupt",
+            params={"threadId": thread_id, "turnId": turn_id},
+        )
+
+        self._interrupt_requests_in_flight.add(key)
+        self._interrupt_requested_threads.discard(thread_key)
+        self._track_background_task(
+            coroutine=pending.wait(),
+            description=(
+                "codex turn interrupt ack failed for "
+                f"thread '{thread_key}' turn '{turn_id}'"
+            ),
+            cleanup=lambda: self._interrupt_requests_in_flight.discard(key),
+        )
+
     async def _route_notifications(self) -> None:
         try:
             while True:
@@ -1544,6 +1795,48 @@ class _CodexAppServerBackend:
                     continue
 
                 key = (thread_id, turn_id)
+                method = notification.get("method")
+                params = notification.get("params") or {}
+                if not isinstance(params, dict):
+                    params = {}
+
+                self._resolve_pending_turn_start_waiter(
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                )
+
+                if self._is_terminal_turn_notification(method=method):
+                    self._terminal_turn_notifications.add(key)
+                    self._interrupt_requests_in_flight.discard(key)
+                    thread_key = await self._thread_key_for_thread_id(
+                        thread_id=thread_id
+                    )
+                    if thread_key is not None:
+                        await self._untrack_active_turn(
+                            thread_key=thread_key,
+                            thread_id=thread_id,
+                            turn_id=turn_id,
+                        )
+                elif self._notification_tracks_active_turn(
+                    method=method,
+                    params=params,
+                ):
+                    thread_key = await self._thread_key_for_thread_id(
+                        thread_id=thread_id
+                    )
+                    if thread_key is not None:
+                        await self._track_active_turn(
+                            thread_key=thread_key,
+                            thread_id=thread_id,
+                            turn_id=turn_id,
+                        )
+                        if thread_key in self._interrupt_requested_threads:
+                            await self._request_turn_interrupt_detached(
+                                thread_key=thread_key,
+                                thread_id=thread_id,
+                                turn_id=turn_id,
+                            )
+
                 async with self._router_route_lock:
                     queue = self._turn_queues.get(key)
                     if queue is not None:
@@ -1611,6 +1904,7 @@ class _CodexAppServerBackend:
         key = (thread_id, turn_id)
         async with self._router_route_lock:
             self._turn_queues.pop(key, None)
+            self._terminal_turn_notifications.discard(key)
 
     async def _next_turn_notification(
         self,
@@ -2922,8 +3216,6 @@ class _CodexAppServerBackend:
         resolved_model = self._resolve_model(model=model)
         turn_input = self._normalize_turn_input(message=message)
 
-        await self._ensure_router_started(room=room)
-
         thread_state = await self._get_thread_state(thread_key=thread_key)
         if thread_state is None:
             raise CodexAppServerError(
@@ -2941,8 +3233,13 @@ class _CodexAppServerBackend:
         # chunks. Lock to the first variant seen per turn to avoid duplicating
         # streamed text.
         message_delta_mode: Optional[str] = None
+        turn_start_waiter = self._register_pending_turn_start_waiter(
+            thread_id=thread_id,
+        )
+        self._track_pending_turn_start(thread_key=thread_key)
 
         try:
+            await self._ensure_router_started(room=room)
             normalized_instructions = self._normalize_developer_instructions(
                 developer_instructions=developer_instructions
             )
@@ -2964,12 +3261,23 @@ class _CodexAppServerBackend:
                     },
                 }
 
-            turn_result = await self._session.request(
+            turn_start_request = await self._session.begin_request(
                 method="turn/start",
                 params=turn_params,
             )
+            done, _pending = await asyncio.wait(
+                {turn_start_request.future, turn_start_waiter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            del _pending
 
-            turn_id = self._extract_turn_id(turn_result)
+            if turn_start_request.future in done:
+                turn_result = await turn_start_request.wait()
+                turn_id = self._extract_turn_id(turn_result)
+            else:
+                turn_id = turn_start_waiter.result()
+                turn_start_request.abandon()
+
             await self._track_active_turn(
                 thread_key=thread_key,
                 thread_id=thread_id,
@@ -2979,6 +3287,15 @@ class _CodexAppServerBackend:
                 thread_id=thread_id,
                 turn_id=turn_id,
             )
+            if (
+                thread_key in self._interrupt_requested_threads
+                and (thread_id, turn_id) not in self._terminal_turn_notifications
+            ):
+                await self._request_turn_interrupt_detached(
+                    thread_key=thread_key,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                )
 
             while True:
                 notification = await self._next_turn_notification(turn_queue=turn_queue)
@@ -3113,6 +3430,11 @@ class _CodexAppServerBackend:
             return final_text
 
         finally:
+            self._unregister_pending_turn_start_waiter(
+                thread_id=thread_id,
+                waiter=turn_start_waiter,
+            )
+            self._untrack_pending_turn_start(thread_key=thread_key)
             if turn_id is not None:
                 await self._untrack_active_turn(
                     thread_key=thread_key,

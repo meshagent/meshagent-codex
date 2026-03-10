@@ -581,20 +581,21 @@ class CodexChatBot(ChatBotBase):
         )
 
     async def on_thread_clear(self, *, thread_context: ChatThreadContext):
-        self._cancelling_threads.discard(thread_context.path)
-        await self.clear_thread_status(path=thread_context.path)
         await self._cancel_all_pending_approvals(thread_key=thread_context.path)
-        self._clear_external_thread_id_on_thread(thread_context=thread_context)
         await self._codex_backend.on_thread_clear(
             thread_key=thread_context.path,
             context=thread_context.session,
         )
+        self._cancelling_threads.discard(thread_context.path)
+        self._clear_external_thread_id_on_thread(thread_context=thread_context)
+        await self.clear_thread_status(path=thread_context.path)
 
     async def on_thread_cancel(self, *, thread_context: ChatThreadContext):
-        has_active_turn = self._codex_backend.has_active_turn(
+        should_show_cancelling = self._codex_backend.has_active_turn(
             thread_key=thread_context.path
         )
-        if has_active_turn:
+        already_showing_cancelling = should_show_cancelling
+        if should_show_cancelling:
             self._cancelling_threads.add(thread_context.path)
             self._thread_status_keys.pop(thread_context.path, None)
             await self.set_thread_status(
@@ -602,17 +603,31 @@ class CodexChatBot(ChatBotBase):
                 status="Cancelling",
                 mode="busy",
             )
-        else:
-            self._cancelling_threads.discard(thread_context.path)
-            await self.clear_thread_status(path=thread_context.path)
         await self._cancel_all_pending_approvals(thread_key=thread_context.path)
         await self._codex_backend.on_thread_cancel(thread_key=thread_context.path)
 
-    async def on_thread_close(self, *, thread_context: ChatThreadContext):
+        should_show_cancelling = self._codex_backend.has_active_turn(
+            thread_key=thread_context.path
+        )
+        if should_show_cancelling:
+            self._cancelling_threads.add(thread_context.path)
+            if not already_showing_cancelling:
+                self._thread_status_keys.pop(thread_context.path, None)
+                await self.set_thread_status(
+                    path=thread_context.path,
+                    status="Cancelling",
+                    mode="busy",
+                )
+            return
+
         self._cancelling_threads.discard(thread_context.path)
         await self.clear_thread_status(path=thread_context.path)
+
+    async def on_thread_close(self, *, thread_context: ChatThreadContext):
         await self._cancel_all_pending_approvals(thread_key=thread_context.path)
         await self._codex_backend.on_thread_close(thread_key=thread_context.path)
+        self._cancelling_threads.discard(thread_context.path)
+        await self.clear_thread_status(path=thread_context.path)
 
     def processing_thread_status_mode(
         self, *, path: str, thread_context: Optional[ChatThreadContext]

@@ -1,3 +1,4 @@
+import contextlib
 import asyncio
 import json
 import os
@@ -16,12 +17,32 @@ from meshagent.codex.thread_adapter import CodexThreadAdapter
 
 
 class _FakeSession:
-    def __init__(self, *, notifications: list[dict]):
+    def __init__(
+        self,
+        *,
+        notifications: list[dict],
+        turn_start_delay_s: float = 0.0,
+    ):
         self._notifications: asyncio.Queue[dict] = asyncio.Queue()
         for notification in notifications:
             self._notifications.put_nowait(notification)
         self._requests: list[tuple[str, dict]] = []
+        self._request_tasks: set[asyncio.Task[None]] = set()
         self._room = None
+        self._turn_start_delay_s = turn_start_delay_s
+
+    def _request_result(self, *, method: str, params: dict) -> dict:
+        if method == "turn/start":
+            return {"turn": {"id": "turn-1"}}
+        if method == "turn/steer":
+            return {"turnId": params.get("expectedTurnId")}
+        if method == "turn/interrupt":
+            return {}
+        raise AssertionError(f"unexpected request: {method}")
+
+    async def _request_delay(self, *, method: str) -> None:
+        if method == "turn/start" and self._turn_start_delay_s > 0:
+            await asyncio.sleep(self._turn_start_delay_s)
 
     def set_room(self, *, room) -> None:
         self._room = room
@@ -31,17 +52,66 @@ class _FakeSession:
 
     async def request(self, *, method: str, params: dict) -> dict:
         self._requests.append((method, params))
-        if method == "turn/start":
-            return {"turn": {"id": "turn-1"}}
-        if method == "turn/steer":
-            return {"turnId": params.get("expectedTurnId")}
-        raise AssertionError(f"unexpected request: {method}")
+        await self._request_delay(method=method)
+        return self._request_result(method=method, params=params)
+
+    async def begin_request(self, *, method: str, params: dict):
+        self._requests.append((method, params))
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+
+        async def _resolve() -> None:
+            try:
+                await self._request_delay(method=method)
+                if future.cancelled():
+                    return
+                future.set_result(self._request_result(method=method, params=params))
+            except Exception as exc:
+                if future.cancelled():
+                    return
+                future.set_exception(exc)
+
+        task = asyncio.create_task(_resolve())
+        self._request_tasks.add(task)
+        task.add_done_callback(self._request_tasks.discard)
+        return _FakePendingRequest(future=future)
 
     async def next_notification(self) -> dict:
         return await self._notifications.get()
 
+    def push_notification(self, notification: dict) -> None:
+        self._notifications.put_nowait(notification)
+
     async def close(self) -> None:
-        return
+        tasks = list(self._request_tasks)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._request_tasks.clear()
+
+
+class _FakePendingRequest:
+    def __init__(self, *, future: asyncio.Future):
+        self.future = future
+
+    async def wait(self):
+        try:
+            return await self.future
+        finally:
+            self.abandon()
+
+    def abandon(self) -> None:
+        if self.future.done():
+            if self.future.cancelled():
+                return
+            try:
+                self.future.result()
+            except Exception:
+                return
+            return
+        self.future.cancel()
 
 
 class _FakeThreadOpenSession(_FakeSession):
@@ -385,6 +455,130 @@ async def test_next_turn_notification_has_no_inactivity_timeout() -> None:
         await backend.close()
 
     assert notification["method"] == "turn/completed"
+
+
+@pytest.mark.asyncio
+async def test_codex_next_uses_notifications_when_turn_start_response_is_delayed() -> (
+    None
+):
+    thread_id = "thread-1"
+    turn_id = "turn-1"
+    final_text = "notification-first output"
+    fake_session = _FakeSession(notifications=[], turn_start_delay_s=0.05)
+    backend = _CodexAppServerBackend(request_timeout_s=0.01)
+    backend._session = fake_session
+
+    context = AgentSessionContext()
+    await backend._set_thread_state(
+        thread_key="thread:test",
+        thread_id=thread_id,
+        context=context,
+    )
+
+    async def emit_notifications() -> None:
+        await asyncio.sleep(0.01)
+        fake_session.push_notification(
+            _notification(
+                method="item/started",
+                thread_id=thread_id,
+                turn_id=turn_id,
+                item={"id": "item-1", "type": "agent_message"},
+            )
+        )
+        fake_session.push_notification(
+            _notification(
+                method="item/agentmessage/delta",
+                thread_id=thread_id,
+                turn_id=turn_id,
+                delta=final_text,
+            )
+        )
+        fake_session.push_notification(
+            _notification(
+                method="turn/completed",
+                thread_id=thread_id,
+                turn_id=turn_id,
+                turn_status="completed",
+            )
+        )
+
+    notifier = asyncio.create_task(emit_notifications())
+    try:
+        result = await backend.next(
+            thread_key="thread:test",
+            message="hi",
+            room=object(),
+            toolkits=[],
+            event_handler=None,
+        )
+    finally:
+        await notifier
+        await backend.close()
+
+    assert result == final_text
+    assert context.messages[-1]["content"] == final_text
+
+
+@pytest.mark.asyncio
+async def test_codex_cancel_interrupts_turn_while_turn_start_is_still_pending() -> None:
+    thread_id = "thread-1"
+    turn_id = "turn-1"
+    fake_session = _FakeSession(notifications=[], turn_start_delay_s=0.2)
+    backend = _CodexAppServerBackend()
+    backend._session = fake_session
+
+    context = AgentSessionContext()
+    await backend._set_thread_state(
+        thread_key="thread:test",
+        thread_id=thread_id,
+        context=context,
+    )
+
+    next_task = asyncio.create_task(
+        backend.next(
+            thread_key="thread:test",
+            message="hi",
+            room=object(),
+            toolkits=[],
+            event_handler=None,
+        )
+    )
+
+    try:
+        await asyncio.sleep(0.01)
+        assert backend.has_active_turn(thread_key="thread:test")
+
+        await backend.on_thread_cancel(thread_key="thread:test")
+
+        fake_session.push_notification(
+            _notification(
+                method="turn/started",
+                thread_id=thread_id,
+                turn_id=turn_id,
+            )
+        )
+        fake_session.push_notification(
+            _notification(
+                method="turn/interrupted",
+                thread_id=thread_id,
+                turn_id=turn_id,
+            )
+        )
+
+        result = await next_task
+    finally:
+        if not next_task.done():
+            next_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await next_task
+        await backend.close()
+
+    assert result == ""
+    assert any(method == "turn/start" for method, _params in fake_session._requests)
+    assert (
+        "turn/interrupt",
+        {"threadId": thread_id, "turnId": turn_id},
+    ) in fake_session._requests
 
 
 @pytest.mark.asyncio
