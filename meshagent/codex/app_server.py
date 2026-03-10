@@ -1337,7 +1337,7 @@ class _CodexAppServerBackend:
         await self._clear_thread_state(thread_key=thread_key)
 
     async def on_thread_cancel(self, *, thread_key: str) -> None:
-        active_turns = list(self._active_turns.pop(thread_key, set()))
+        active_turns = list(self._active_turns.get(thread_key, set()))
 
         for thread_id, turn_id in active_turns:
             with contextlib.suppress(Exception):
@@ -1349,6 +1349,10 @@ class _CodexAppServerBackend:
     async def on_thread_close(self, *, thread_key: str) -> None:
         await self.on_thread_cancel(thread_key=thread_key)
         await self._clear_thread_state(thread_key=thread_key)
+
+    def has_active_turn(self, *, thread_key: str) -> bool:
+        active_turns = self._active_turns.get(thread_key)
+        return active_turns is not None and len(active_turns) > 0
 
     async def _active_turn_id_for_thread(
         self, *, thread_key: str, thread_id: str
