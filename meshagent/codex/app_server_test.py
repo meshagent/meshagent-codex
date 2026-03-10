@@ -701,6 +701,28 @@ def test_build_status_event_exec_file_write_sets_path_and_preview() -> None:
     assert event["preview"] == "export default {};"
 
 
+def test_build_status_event_exec_file_write_sets_preview_for_redirect_after_heredoc() -> (
+    None
+):
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"cat <<'EOF' > website/src/App.jsx\nconst highlights = [];\nexport default highlights;\nEOF\"",
+            }
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Created website/src/App.jsx"
+    assert event["path"] == "website/src/App.jsx"
+    assert event["preview"] == "const highlights = [];\nexport default highlights;"
+
+
 def test_build_status_event_diff_sets_path_and_structured_preview() -> None:
     backend = _CodexAppServerBackend()
 

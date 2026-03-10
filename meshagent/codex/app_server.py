@@ -33,6 +33,10 @@ _EXEC_FILE_WRITE_HEREDOC_RE = re.compile(
     r"""^\s*cat\s+(?P<redirect>>>?)\s*(?P<path>'[^']+'|"[^"]+"|[^\s]+)\s*<<(?P<quote>['"]?)(?P<marker>[A-Za-z0-9_:\-]+)(?P=quote)\s*\n(?P<content>.*)\n(?P=marker)\s*$""",
     re.DOTALL,
 )
+_EXEC_FILE_WRITE_HEREDOC_REDIRECT_AFTER_RE = re.compile(
+    r"""^\s*cat\s+<<(?P<quote>['"]?)(?P<marker>[A-Za-z0-9_:\-]+)(?P=quote)\s*(?P<redirect>>>?)\s*(?P<path>'[^']+'|"[^"]+"|[^\s]+)\s*\n(?P<content>.*)\n(?P=marker)\s*$""",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -2346,7 +2350,14 @@ class _CodexAppServerBackend:
             return None
 
         script = self._extract_exec_script(command=command)
-        match = _EXEC_FILE_WRITE_HEREDOC_RE.match(script)
+        match = None
+        for candidate in (
+            _EXEC_FILE_WRITE_HEREDOC_RE,
+            _EXEC_FILE_WRITE_HEREDOC_REDIRECT_AFTER_RE,
+        ):
+            match = candidate.match(script)
+            if match is not None:
+                break
         if match is None:
             return None
 
