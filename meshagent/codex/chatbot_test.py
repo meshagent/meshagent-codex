@@ -229,6 +229,38 @@ async def test_clear_thread_status_ignores_stale_nowait_update(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+async def test_thread_status_started_at_persists_for_active_turn_and_clears() -> None:
+    bot = CodexChatBot(name="codex-test")
+    local_participant = _FakeLocalParticipant()
+    bot._room = _FakeRoom(local_participant=local_participant)  # type: ignore[assignment]
+    path = "/threads/test"
+
+    await bot.set_thread_status(path=path, status="Thinking", mode="busy")
+    first_started_at = local_participant.get_attribute(
+        bot._thread_status_started_at_attribute_name(path=path)
+    )
+
+    assert isinstance(first_started_at, str)
+    assert first_started_at != ""
+
+    await bot.set_thread_status(path=path, status="Searching the web", mode="busy")
+    second_started_at = local_participant.get_attribute(
+        bot._thread_status_started_at_attribute_name(path=path)
+    )
+
+    assert second_started_at == first_started_at
+
+    await bot.clear_thread_status(path=path)
+
+    assert (
+        local_participant.get_attribute(
+            bot._thread_status_started_at_attribute_name(path=path)
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_diff_status_events_do_not_restore_status_after_turn_clear(
     monkeypatch,
 ) -> None:
@@ -468,6 +500,25 @@ class _FakeParticipant:
         if key == "name":
             return self._name
         return None
+
+
+class _FakeLocalParticipant:
+    def __init__(self):
+        self._attributes: dict[str, str] = {}
+
+    async def set_attribute(self, key: str, value):
+        if isinstance(value, str):
+            self._attributes[key] = value
+        elif value is None:
+            self._attributes.pop(key, None)
+
+    def get_attribute(self, key: str):
+        return self._attributes.get(key)
+
+
+class _FakeRoom:
+    def __init__(self, *, local_participant: _FakeLocalParticipant):
+        self.local_participant = local_participant
 
 
 @pytest.mark.asyncio

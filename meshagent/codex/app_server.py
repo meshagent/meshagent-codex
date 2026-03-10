@@ -3,10 +3,12 @@ import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 import shlex
 import sys
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
@@ -25,6 +27,29 @@ DEFAULT_CODEX_CONTAINER_MOUNTS = ContainerMountSpec(
 )
 
 JsonRpcId = str | int
+EXEC_FILE_WRITE_PREVIEW_LIMIT = 12000
+DIFF_PREVIEW_LIMIT = 12000
+_EXEC_FILE_WRITE_HEREDOC_RE = re.compile(
+    r"""^\s*cat\s+(?P<redirect>>>?)\s*(?P<path>'[^']+'|"[^"]+"|[^\s]+)\s*<<(?P<quote>['"]?)(?P<marker>[A-Za-z0-9_:\-]+)(?P=quote)\s*\n(?P<content>.*)\n(?P=marker)\s*$""",
+    re.DOTALL,
+)
+
+
+@dataclass(frozen=True)
+class _ExecFileWritePreview:
+    path: str
+    preview: str
+    append: bool
+
+
+@dataclass(frozen=True)
+class _DiffChangePreview:
+    path: str
+    move_path: str
+    kind: str
+    added: int
+    removed: int
+    diff: str
 
 
 class CodexAppServerError(RoomException):
@@ -1979,6 +2004,102 @@ class _CodexAppServerBackend:
 
         return details
 
+    def _is_shell_command_flag(self, *, token: str) -> bool:
+        if not isinstance(token, str) or len(token) <= 1 or not token.startswith("-"):
+            return False
+
+        flags = token[1:]
+        return "c" in flags and all(flag in ("c", "l") for flag in flags)
+
+    def _unquote_shell_token(self, *, token: str) -> str:
+        normalized = token.strip()
+        if normalized == "":
+            return ""
+
+        with contextlib.suppress(ValueError):
+            parts = shlex.split(normalized)
+            if len(parts) == 1:
+                return parts[0]
+
+        if len(normalized) >= 2 and normalized[0] == normalized[-1]:
+            if normalized[0] in ("'", '"'):
+                return normalized[1:-1]
+
+        return normalized
+
+    def _extract_exec_script(self, *, command: str) -> str:
+        normalized = command.strip()
+        if normalized == "":
+            return ""
+
+        with contextlib.suppress(ValueError):
+            argv = shlex.split(normalized)
+            for index, token in enumerate(argv[:-1]):
+                if self._is_shell_command_flag(token=token):
+                    script = argv[index + 1]
+                    if isinstance(script, str) and script.strip() != "":
+                        return script
+
+        return normalized
+
+    def _extract_exec_file_write_preview(
+        self,
+        *,
+        item: dict,
+    ) -> Optional[_ExecFileWritePreview]:
+        command = self._extract_exec_command(item=item)
+        if command == "":
+            return None
+
+        script = self._extract_exec_script(command=command)
+        match = _EXEC_FILE_WRITE_HEREDOC_RE.match(script)
+        if match is None:
+            return None
+
+        path = self._unquote_shell_token(token=match.group("path"))
+        if path == "":
+            return None
+
+        preview = match.group("content").replace("\r\n", "\n")
+        preview = self._truncate_text(
+            text=preview,
+            limit=EXEC_FILE_WRITE_PREVIEW_LIMIT,
+        )
+
+        return _ExecFileWritePreview(
+            path=path,
+            preview=preview,
+            append=match.group("redirect") == ">>",
+        )
+
+    def _file_write_headline(
+        self,
+        *,
+        status: str,
+        file_write_preview: _ExecFileWritePreview,
+    ) -> str:
+        path = file_write_preview.path
+        if file_write_preview.append:
+            if status == "failed":
+                return f"Append Failed: {path}"
+            if status == "cancelled":
+                return f"Append Cancelled: {path}"
+            if self._is_active_state(state=status):
+                return f"Appending {path}"
+            if status == "completed":
+                return f"Appended {path}"
+            return f"Append {path}"
+
+        if status == "failed":
+            return f"Create Failed: {path}"
+        if status == "cancelled":
+            return f"Create Cancelled: {path}"
+        if self._is_active_state(state=status):
+            return f"Creating {path}"
+        if status == "completed":
+            return f"Created {path}"
+        return f"Create {path}"
+
     def _is_exploration_actions(self, *, action_details: list[str]) -> bool:
         if len(action_details) == 0:
             return False
@@ -1992,8 +2113,18 @@ class _CodexAppServerBackend:
         return True
 
     def _exec_display(
-        self, *, status: str, item: dict
+        self,
+        *,
+        status: str,
+        item: dict,
+        file_write_preview: Optional[_ExecFileWritePreview] = None,
     ) -> tuple[Optional[str], list[str]]:
+        if file_write_preview is not None:
+            return self._file_write_headline(
+                status=status,
+                file_write_preview=file_write_preview,
+            ), []
+
         command = self._extract_exec_command(item=item)
         action_details = self._extract_exec_action_details(item=item)
         if command == "" and len(action_details) == 0:
@@ -2191,6 +2322,84 @@ class _CodexAppServerBackend:
                 break
         return lines
 
+    def _parse_diff_changes(self, *, item: dict) -> list[_DiffChangePreview]:
+        raw_changes = item.get("changes")
+        if not isinstance(raw_changes, list) or len(raw_changes) == 0:
+            return []
+
+        changes: list[_DiffChangePreview] = []
+        for change in raw_changes:
+            if not isinstance(change, dict):
+                continue
+
+            path = self._first_text(source=change, keys=("path",))
+            diff = self._first_text(source=change, keys=("diff",))
+
+            raw_kind = change.get("kind")
+            kind_type = ""
+            move_path = ""
+            if isinstance(raw_kind, str):
+                kind_type = raw_kind
+            elif isinstance(raw_kind, dict):
+                kind_type = self._first_text(source=raw_kind, keys=("type",))
+                move_path = self._first_text(
+                    source=raw_kind,
+                    keys=("movePath", "move_path"),
+                )
+
+            if path == "" and move_path != "":
+                path = move_path
+            if path == "":
+                continue
+
+            added, removed = self._diff_line_counts(diff=diff, kind=kind_type)
+            changes.append(
+                _DiffChangePreview(
+                    path=path,
+                    move_path=move_path,
+                    kind=kind_type,
+                    added=added,
+                    removed=removed,
+                    diff=diff,
+                )
+            )
+
+        return changes
+
+    def _diff_event_path(self, *, changes: list[_DiffChangePreview]) -> str:
+        if len(changes) != 1:
+            return ""
+
+        change = changes[0]
+        if change.move_path != "":
+            return change.move_path
+        return change.path
+
+    def _diff_preview(self, *, changes: list[_DiffChangePreview]) -> str:
+        preview_changes: list[dict[str, str]] = []
+        for change in changes:
+            normalized_diff = change.diff.replace("\r\n", "\n").strip("\n")
+            if normalized_diff == "":
+                continue
+
+            preview_change = {
+                "path": change.path,
+                "diff": self._truncate_text(
+                    text=normalized_diff,
+                    limit=DIFF_PREVIEW_LIMIT,
+                ),
+            }
+            if change.move_path != "":
+                preview_change["move_path"] = change.move_path
+            if change.kind != "":
+                preview_change["kind"] = change.kind
+            preview_changes.append(preview_change)
+
+        if len(preview_changes) == 0:
+            return ""
+
+        return json.dumps({"changes": preview_changes}, ensure_ascii=False)
+
     def _plan_lines(self, *, params: dict) -> list[str]:
         raw_plan = params.get("plan")
         if not isinstance(raw_plan, list):
@@ -2221,6 +2430,8 @@ class _CodexAppServerBackend:
         status: str,
         kind: str,
         item: dict,
+        file_write_preview: Optional[_ExecFileWritePreview] = None,
+        diff_changes: Optional[list[_DiffChangePreview]] = None,
     ) -> tuple[Optional[str], list[str]]:
         if kind == "plan" and method.lower().startswith("turn/plan/"):
             lines = self._plan_lines(params=params)
@@ -2230,64 +2441,48 @@ class _CodexAppServerBackend:
             return headline, lines
 
         if kind == "exec":
-            return self._exec_display(status=status, item=item)
+            return self._exec_display(
+                status=status,
+                item=item,
+                file_write_preview=file_write_preview,
+            )
 
         if kind == "reasoning":
             return self._reasoning_display(status=status, params=params, item=item)
 
         if kind == "diff":
-            raw_changes = item.get("changes")
-            if not isinstance(raw_changes, list) or len(raw_changes) == 0:
-                return None, []
-
-            changes: list[tuple[str, str, str, int, int, str]] = []
-            total_added = 0
-            total_removed = 0
-            for change in raw_changes:
-                if not isinstance(change, dict):
-                    continue
-                path = self._first_text(source=change, keys=("path",))
-                diff = self._first_text(source=change, keys=("diff",))
-
-                raw_kind = change.get("kind")
-                kind_type = ""
-                move_path = ""
-                if isinstance(raw_kind, str):
-                    kind_type = raw_kind
-                elif isinstance(raw_kind, dict):
-                    kind_type = self._first_text(source=raw_kind, keys=("type",))
-                    move_path = self._first_text(
-                        source=raw_kind, keys=("movePath", "move_path")
-                    )
-
-                if path == "":
-                    continue
-
-                added, removed = self._diff_line_counts(diff=diff, kind=kind_type)
-                total_added += added
-                total_removed += removed
-                changes.append((path, move_path, kind_type, added, removed, diff))
-
+            changes = (
+                diff_changes
+                if diff_changes is not None
+                else self._parse_diff_changes(item=item)
+            )
             if len(changes) == 0:
                 return None, []
 
+            total_added = sum(change.added for change in changes)
+            total_removed = sum(change.removed for change in changes)
+
             if len(changes) == 1:
-                path, move_path, kind_type, added, removed, diff = changes[0]
-                normalized_kind = self._normalize_name(value=kind_type)
+                change = changes[0]
+                normalized_kind = self._normalize_name(value=change.kind)
                 verb = "Edited"
                 if normalized_kind == "add":
                     verb = "Added"
                 elif normalized_kind == "delete":
                     verb = "Deleted"
 
-                path_display = path if move_path == "" else f"{path} \u2192 {move_path}"
+                path_display = (
+                    change.path
+                    if change.move_path == ""
+                    else f"{change.path} \u2192 {change.move_path}"
+                )
                 headline = (
                     f"{verb} {path_display} "
-                    f"{self._line_count_summary(added=added, removed=removed)}"
+                    f"{self._line_count_summary(added=change.added, removed=change.removed)}"
                 )
                 detail_lines = self._file_change_preview_lines(
-                    diff=diff,
-                    kind=kind_type,
+                    diff=change.diff,
+                    kind=change.kind,
                 )
                 return headline, detail_lines
 
@@ -2297,11 +2492,15 @@ class _CodexAppServerBackend:
                 f"{self._line_count_summary(added=total_added, removed=total_removed)}"
             )
             detail_lines: list[str] = []
-            for path, move_path, _, added, removed, _ in changes:
-                path_display = path if move_path == "" else f"{path} \u2192 {move_path}"
+            for change in changes:
+                path_display = (
+                    change.path
+                    if change.move_path == ""
+                    else f"{change.path} \u2192 {change.move_path}"
+                )
                 detail_lines.append(
                     f"{path_display} "
-                    f"{self._line_count_summary(added=added, removed=removed)}"
+                    f"{self._line_count_summary(added=change.added, removed=change.removed)}"
                 )
             return headline, detail_lines
 
@@ -2631,6 +2830,16 @@ class _CodexAppServerBackend:
         item = self._extract_item(params=params)
         item_type = _item_type(item)
         kind = self._event_kind(method=method, item_type=item_type)
+        file_write_preview = None
+        diff_changes: Optional[list[_DiffChangePreview]] = None
+        diff_path = ""
+        diff_preview = ""
+        if kind == "exec":
+            file_write_preview = self._extract_exec_file_write_preview(item=item)
+        elif kind == "diff":
+            diff_changes = self._parse_diff_changes(item=item)
+            diff_path = self._diff_event_path(changes=diff_changes)
+            diff_preview = self._diff_preview(changes=diff_changes)
         correlation_key = self._event_key(
             method=method,
             turn_id=turn_id,
@@ -2642,6 +2851,8 @@ class _CodexAppServerBackend:
             status=status,
             kind=kind,
             item=item,
+            file_write_preview=file_write_preview,
+            diff_changes=diff_changes,
         )
         summary = self._status_summary(
             method=method,
@@ -2667,7 +2878,7 @@ class _CodexAppServerBackend:
         elif isinstance(headline, str) and headline.strip() != "":
             summary = self._truncate_text(text=headline.strip(), limit=280)
 
-        return {
+        event = {
             "type": "agent.event",
             "source": "codex",
             "name": event_type,
@@ -2682,6 +2893,16 @@ class _CodexAppServerBackend:
             "summary": summary,
             "data": self._stringify_status_payload(value=params),
         }
+        if file_write_preview is not None:
+            event["path"] = file_write_preview.path
+            if file_write_preview.preview != "":
+                event["preview"] = file_write_preview.preview
+        elif kind == "diff":
+            if diff_path != "":
+                event["path"] = diff_path
+            if diff_preview != "":
+                event["preview"] = diff_preview
+        return event
 
     async def next(
         self,

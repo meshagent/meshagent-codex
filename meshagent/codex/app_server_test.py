@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import shutil
 import uuid
@@ -484,6 +485,110 @@ async def test_reasoning_delta_keeps_whitespace_when_streaming() -> None:
     reasoning = messages.children[0]
     assert reasoning.tag_name == "reasoning"
     assert reasoning.get_attribute("summary") == "hello world"
+
+
+def test_build_status_event_exec_file_write_sets_path_and_preview() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"cat > /website/rollup.config.js <<'EOF'\nexport default {};\nEOF\"",
+            }
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Created /website/rollup.config.js"
+    assert event["path"] == "/website/rollup.config.js"
+    assert event["preview"] == "export default {};"
+
+
+def test_build_status_event_diff_sets_path_and_structured_preview() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "file_change",
+                "changes": [
+                    {
+                        "path": "src/main.tsx",
+                        "kind": {"type": "edit"},
+                        "diff": "--- a/src/main.tsx\n+++ b/src/main.tsx\n@@ -1 +1 @@\n-console.log('old');\n+console.log('new');",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert event["kind"] == "diff"
+    assert event["path"] == "src/main.tsx"
+
+    preview = json.loads(event["preview"])
+    assert preview == {
+        "changes": [
+            {
+                "path": "src/main.tsx",
+                "kind": "edit",
+                "diff": "--- a/src/main.tsx\n+++ b/src/main.tsx\n@@ -1 +1 @@\n-console.log('old');\n+console.log('new');",
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_handle_custom_event_persists_preview_and_path_without_raw_data() -> None:
+    adapter = object.__new__(CodexThreadAdapter)
+    adapter._active_events_by_key = {}
+    adapter._active_reasoning_by_key = {}
+    adapter._persisted_kinds = {
+        "exec",
+        "tool",
+        "collab",
+        "web",
+        "image",
+        "diff",
+        "approval",
+    }
+    messages = _FakeElement(tag_name="messages")
+    preview = json.dumps(
+        {
+            "changes": [
+                {
+                    "path": "src/main.tsx",
+                    "diff": "--- a/src/main.tsx\n+++ b/src/main.tsx\n@@ -1 +1 @@\n-console.log('old');\n+console.log('new');",
+                }
+            ]
+        }
+    )
+
+    await adapter.handle_custom_event(
+        messages=messages,
+        event={
+            "type": "agent.event",
+            "kind": "diff",
+            "state": "completed",
+            "method": "turn/diff/completed",
+            "item_id": "diff-1",
+            "path": "src/main.tsx",
+            "preview": preview,
+            "headline": "Edited src/main.tsx (+1 -1)",
+            "data": '{"raw":"payload"}',
+        },
+    )
+
+    assert len(messages.children) == 1
+    event_element = messages.children[0]
+    assert event_element.tag_name == "event"
+    assert event_element.get_attribute("path") == "src/main.tsx"
+    assert event_element.get_attribute("preview") == preview
+    assert event_element.get_attribute("data") is None
 
 
 @pytest.mark.asyncio
