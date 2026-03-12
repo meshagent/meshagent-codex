@@ -1,4 +1,6 @@
+import contextlib
 import asyncio
+import json
 import os
 import shutil
 import uuid
@@ -15,12 +17,32 @@ from meshagent.codex.thread_adapter import CodexThreadAdapter
 
 
 class _FakeSession:
-    def __init__(self, *, notifications: list[dict]):
+    def __init__(
+        self,
+        *,
+        notifications: list[dict],
+        turn_start_delay_s: float = 0.0,
+    ):
         self._notifications: asyncio.Queue[dict] = asyncio.Queue()
         for notification in notifications:
             self._notifications.put_nowait(notification)
         self._requests: list[tuple[str, dict]] = []
+        self._request_tasks: set[asyncio.Task[None]] = set()
         self._room = None
+        self._turn_start_delay_s = turn_start_delay_s
+
+    def _request_result(self, *, method: str, params: dict) -> dict:
+        if method == "turn/start":
+            return {"turn": {"id": "turn-1"}}
+        if method == "turn/steer":
+            return {"turnId": params.get("expectedTurnId")}
+        if method == "turn/interrupt":
+            return {}
+        raise AssertionError(f"unexpected request: {method}")
+
+    async def _request_delay(self, *, method: str) -> None:
+        if method == "turn/start" and self._turn_start_delay_s > 0:
+            await asyncio.sleep(self._turn_start_delay_s)
 
     def set_room(self, *, room) -> None:
         self._room = room
@@ -30,17 +52,66 @@ class _FakeSession:
 
     async def request(self, *, method: str, params: dict) -> dict:
         self._requests.append((method, params))
-        if method == "turn/start":
-            return {"turn": {"id": "turn-1"}}
-        if method == "turn/steer":
-            return {"turnId": params.get("expectedTurnId")}
-        raise AssertionError(f"unexpected request: {method}")
+        await self._request_delay(method=method)
+        return self._request_result(method=method, params=params)
+
+    async def begin_request(self, *, method: str, params: dict):
+        self._requests.append((method, params))
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+
+        async def _resolve() -> None:
+            try:
+                await self._request_delay(method=method)
+                if future.cancelled():
+                    return
+                future.set_result(self._request_result(method=method, params=params))
+            except Exception as exc:
+                if future.cancelled():
+                    return
+                future.set_exception(exc)
+
+        task = asyncio.create_task(_resolve())
+        self._request_tasks.add(task)
+        task.add_done_callback(self._request_tasks.discard)
+        return _FakePendingRequest(future=future)
 
     async def next_notification(self) -> dict:
         return await self._notifications.get()
 
+    def push_notification(self, notification: dict) -> None:
+        self._notifications.put_nowait(notification)
+
     async def close(self) -> None:
-        return
+        tasks = list(self._request_tasks)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._request_tasks.clear()
+
+
+class _FakePendingRequest:
+    def __init__(self, *, future: asyncio.Future):
+        self.future = future
+
+    async def wait(self):
+        try:
+            return await self.future
+        finally:
+            self.abandon()
+
+    def abandon(self) -> None:
+        if self.future.done():
+            if self.future.cancelled():
+                return
+            try:
+                self.future.result()
+            except Exception:
+                return
+            return
+        self.future.cancel()
 
 
 class _FakeThreadOpenSession(_FakeSession):
@@ -387,6 +458,130 @@ async def test_next_turn_notification_has_no_inactivity_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_codex_next_uses_notifications_when_turn_start_response_is_delayed() -> (
+    None
+):
+    thread_id = "thread-1"
+    turn_id = "turn-1"
+    final_text = "notification-first output"
+    fake_session = _FakeSession(notifications=[], turn_start_delay_s=0.05)
+    backend = _CodexAppServerBackend(request_timeout_s=0.01)
+    backend._session = fake_session
+
+    context = AgentSessionContext()
+    await backend._set_thread_state(
+        thread_key="thread:test",
+        thread_id=thread_id,
+        context=context,
+    )
+
+    async def emit_notifications() -> None:
+        await asyncio.sleep(0.01)
+        fake_session.push_notification(
+            _notification(
+                method="item/started",
+                thread_id=thread_id,
+                turn_id=turn_id,
+                item={"id": "item-1", "type": "agent_message"},
+            )
+        )
+        fake_session.push_notification(
+            _notification(
+                method="item/agentmessage/delta",
+                thread_id=thread_id,
+                turn_id=turn_id,
+                delta=final_text,
+            )
+        )
+        fake_session.push_notification(
+            _notification(
+                method="turn/completed",
+                thread_id=thread_id,
+                turn_id=turn_id,
+                turn_status="completed",
+            )
+        )
+
+    notifier = asyncio.create_task(emit_notifications())
+    try:
+        result = await backend.next(
+            thread_key="thread:test",
+            message="hi",
+            room=object(),
+            toolkits=[],
+            event_handler=None,
+        )
+    finally:
+        await notifier
+        await backend.close()
+
+    assert result == final_text
+    assert context.messages[-1]["content"] == final_text
+
+
+@pytest.mark.asyncio
+async def test_codex_cancel_interrupts_turn_while_turn_start_is_still_pending() -> None:
+    thread_id = "thread-1"
+    turn_id = "turn-1"
+    fake_session = _FakeSession(notifications=[], turn_start_delay_s=0.2)
+    backend = _CodexAppServerBackend()
+    backend._session = fake_session
+
+    context = AgentSessionContext()
+    await backend._set_thread_state(
+        thread_key="thread:test",
+        thread_id=thread_id,
+        context=context,
+    )
+
+    next_task = asyncio.create_task(
+        backend.next(
+            thread_key="thread:test",
+            message="hi",
+            room=object(),
+            toolkits=[],
+            event_handler=None,
+        )
+    )
+
+    try:
+        await asyncio.sleep(0.01)
+        assert backend.has_active_turn(thread_key="thread:test")
+
+        await backend.on_thread_cancel(thread_key="thread:test")
+
+        fake_session.push_notification(
+            _notification(
+                method="turn/started",
+                thread_id=thread_id,
+                turn_id=turn_id,
+            )
+        )
+        fake_session.push_notification(
+            _notification(
+                method="turn/interrupted",
+                thread_id=thread_id,
+                turn_id=turn_id,
+            )
+        )
+
+        result = await next_task
+    finally:
+        if not next_task.done():
+            next_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await next_task
+        await backend.close()
+
+    assert result == ""
+    assert any(method == "turn/start" for method, _params in fake_session._requests)
+    assert (
+        "turn/interrupt",
+        {"threadId": thread_id, "turnId": turn_id},
+    ) in fake_session._requests
+
+
+@pytest.mark.asyncio
 async def test_on_thread_open_resumes_persisted_external_thread_id() -> None:
     backend = _CodexAppServerBackend()
     fake_session = _FakeThreadOpenSession(resume_thread_ids={"thread-persisted"})
@@ -484,6 +679,277 @@ async def test_reasoning_delta_keeps_whitespace_when_streaming() -> None:
     reasoning = messages.children[0]
     assert reasoning.tag_name == "reasoning"
     assert reasoning.get_attribute("summary") == "hello world"
+
+
+def test_build_status_event_exec_file_write_sets_path_and_preview() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"cat > /website/rollup.config.js <<'EOF'\nexport default {};\nEOF\"",
+            }
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Created /website/rollup.config.js"
+    assert event["path"] == "/website/rollup.config.js"
+    assert event["preview"] == "export default {};"
+
+
+def test_build_status_event_exec_file_write_sets_preview_for_redirect_after_heredoc() -> (
+    None
+):
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"cat <<'EOF' > website/src/App.jsx\nconst highlights = [];\nexport default highlights;\nEOF\"",
+            }
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Created website/src/App.jsx"
+    assert event["path"] == "website/src/App.jsx"
+    assert event["preview"] == "const highlights = [];\nexport default highlights;"
+
+
+def test_build_status_event_exec_search_sets_path_and_details() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": '/bin/bash -lc "rg \\"Button|onClick|variant=\\\\\\"ghost\\\\\\"|Timeline|Calendar|Filters|Share|New automation\\" -n /website/src/App.tsx"',
+            }
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Searched /website/src/App.tsx"
+    assert event["path"] == "/website/src/App.tsx"
+    assert event["details"] == [
+        'Pattern: Button|onClick|variant="ghost"|Timeline|Calendar|Filters|Share|New automation'
+    ]
+    assert "preview" not in event
+
+
+def test_build_status_event_exec_search_started_uses_searching_headline() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/started",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": '/bin/bash -lc "rg \\"Button|onClick|variant=\\\\\\"ghost\\\\\\"|Timeline|Calendar|Filters|Share|New automation\\" -n /website/src/App.tsx"',
+            }
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Searching /website/src/App.tsx"
+    assert event["path"] == "/website/src/App.tsx"
+    assert event["details"] == [
+        'Pattern: Button|onClick|variant="ghost"|Timeline|Calendar|Filters|Share|New automation'
+    ]
+
+
+def test_build_status_event_exec_search_multiple_paths_omits_path() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": '/bin/bash -lc "rg \\"foo\\" -n src/App.tsx src/lib.ts"',
+            }
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Searched 2 paths"
+    assert event["details"] == ["Pattern: foo", "Paths: src/App.tsx, src/lib.ts"]
+    assert "path" not in event
+    assert "preview" not in event
+
+
+def test_build_status_event_exec_read_sets_path_and_retained_correlation() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "turn": {"id": "turn-1"},
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"sed -n '200,400p' website/src/App.jsx\"",
+                "commandActions": [{"type": "read", "name": "App.jsx"}],
+            },
+        },
+    )
+
+    assert event["kind"] == "exec"
+    assert event["headline"] == "Read website/src/App.jsx"
+    assert event["path"] == "website/src/App.jsx"
+    assert event["details"] == []
+    assert event["correlation_key"] == "turn.explore:turn-1:website/src/App.jsx"
+    assert event["retain_correlation"] is True
+    assert "preview" not in event
+
+
+def test_build_status_event_diff_sets_path_and_structured_preview() -> None:
+    backend = _CodexAppServerBackend()
+
+    event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "item": {
+                "id": "item-1",
+                "type": "file_change",
+                "changes": [
+                    {
+                        "path": "src/main.tsx",
+                        "kind": {"type": "edit"},
+                        "diff": "--- a/src/main.tsx\n+++ b/src/main.tsx\n@@ -1 +1 @@\n-console.log('old');\n+console.log('new');",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert event["kind"] == "diff"
+    assert event["path"] == "src/main.tsx"
+
+    preview = json.loads(event["preview"])
+    assert preview == {
+        "changes": [
+            {
+                "path": "src/main.tsx",
+                "kind": "edit",
+                "diff": "--- a/src/main.tsx\n+++ b/src/main.tsx\n@@ -1 +1 @@\n-console.log('old');\n+console.log('new');",
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_handle_custom_event_persists_preview_and_path_without_raw_data() -> None:
+    adapter = object.__new__(CodexThreadAdapter)
+    adapter._active_events_by_key = {}
+    adapter._active_reasoning_by_key = {}
+    adapter._persisted_kinds = {
+        "exec",
+        "tool",
+        "collab",
+        "web",
+        "image",
+        "diff",
+        "approval",
+    }
+    messages = _FakeElement(tag_name="messages")
+    preview = json.dumps(
+        {
+            "changes": [
+                {
+                    "path": "src/main.tsx",
+                    "diff": "--- a/src/main.tsx\n+++ b/src/main.tsx\n@@ -1 +1 @@\n-console.log('old');\n+console.log('new');",
+                }
+            ]
+        }
+    )
+
+    await adapter.handle_custom_event(
+        messages=messages,
+        event={
+            "type": "agent.event",
+            "kind": "diff",
+            "state": "completed",
+            "method": "turn/diff/completed",
+            "item_id": "diff-1",
+            "path": "src/main.tsx",
+            "preview": preview,
+            "headline": "Edited src/main.tsx (+1 -1)",
+            "data": '{"raw":"payload"}',
+        },
+    )
+
+    assert len(messages.children) == 1
+    event_element = messages.children[0]
+    assert event_element.tag_name == "event"
+    assert event_element.get_attribute("path") == "src/main.tsx"
+    assert event_element.get_attribute("preview") == preview
+    assert event_element.get_attribute("data") is None
+
+
+@pytest.mark.asyncio
+async def test_handle_custom_event_coalesces_repeated_exec_exploration_by_path() -> (
+    None
+):
+    adapter = object.__new__(CodexThreadAdapter)
+    adapter._active_events_by_key = {}
+    adapter._active_reasoning_by_key = {}
+    adapter._persisted_kinds = {
+        "exec",
+        "tool",
+        "collab",
+        "web",
+        "image",
+        "diff",
+        "approval",
+    }
+    messages = _FakeElement(tag_name="messages")
+    backend = _CodexAppServerBackend()
+
+    first_event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "turn": {"id": "turn-1"},
+            "item": {
+                "id": "item-1",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"sed -n '1,120p' website/src/App.jsx\"",
+                "commandActions": [{"type": "read", "name": "App.jsx"}],
+            },
+        },
+    )
+    second_event = backend._build_status_event(
+        method="item/completed",
+        params={
+            "turn": {"id": "turn-1"},
+            "item": {
+                "id": "item-2",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"sed -n '121,240p' website/src/App.jsx\"",
+                "commandActions": [{"type": "read", "name": "App.jsx"}],
+            },
+        },
+    )
+
+    await adapter.handle_custom_event(messages=messages, event=first_event)
+    await adapter.handle_custom_event(messages=messages, event=second_event)
+
+    assert len(messages.children) == 1
+    event_element = messages.children[0]
+    assert event_element.get_attribute("headline") == "Read website/src/App.jsx"
+    assert event_element.get_attribute("path") == "website/src/App.jsx"
+    assert event_element.get_attribute("item_id") == "item-2"
 
 
 @pytest.mark.asyncio

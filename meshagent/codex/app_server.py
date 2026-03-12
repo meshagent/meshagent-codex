@@ -3,10 +3,12 @@ import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 import shlex
 import sys
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
@@ -25,10 +27,141 @@ DEFAULT_CODEX_CONTAINER_MOUNTS = ContainerMountSpec(
 )
 
 JsonRpcId = str | int
+EXEC_FILE_WRITE_PREVIEW_LIMIT = 12000
+DIFF_PREVIEW_LIMIT = 12000
+EXEC_SEARCH_DETAIL_LIMIT = 2000
+_EXEC_FILE_WRITE_HEREDOC_RE = re.compile(
+    r"""^\s*cat\s+(?P<redirect>>>?)\s*(?P<path>'[^']+'|"[^"]+"|[^\s]+)\s*<<(?P<quote>['"]?)(?P<marker>[A-Za-z0-9_:\-]+)(?P=quote)\s*\n(?P<content>.*)\n(?P=marker)\s*$""",
+    re.DOTALL,
+)
+_EXEC_FILE_WRITE_HEREDOC_REDIRECT_AFTER_RE = re.compile(
+    r"""^\s*cat\s+<<(?P<quote>['"]?)(?P<marker>[A-Za-z0-9_:\-]+)(?P=quote)\s*(?P<redirect>>>?)\s*(?P<path>'[^']+'|"[^"]+"|[^\s]+)\s*\n(?P<content>.*)\n(?P=marker)\s*$""",
+    re.DOTALL,
+)
+_EXEC_SEARCH_COMMANDS = {"rg", "grep", "egrep", "fgrep"}
+_EXEC_READ_COMMANDS = {"bat", "cat", "head", "less", "more", "sed", "tail"}
+_EXEC_LIST_COMMANDS = {"ls", "tree"}
+_EXEC_SEARCH_QUERY_FLAGS = {"-e", "--regexp"}
+_EXEC_SEARCH_SHORT_VALUE_FLAGS = {
+    "-A",
+    "-B",
+    "-C",
+    "-D",
+    "-M",
+    "-T",
+    "-f",
+    "-g",
+    "-j",
+    "-m",
+    "-t",
+}
+_EXEC_READ_VALUE_FLAGS = {"-c", "-e", "-f", "-n"}
+_EXEC_LIST_VALUE_FLAGS = {"-I", "--ignore"}
+_EXEC_SEARCH_LONG_VALUE_FLAGS = {
+    "--binary-files",
+    "--color",
+    "--colors",
+    "--context",
+    "--context-separator",
+    "--devices",
+    "--directories",
+    "--encoding",
+    "--engine",
+    "--exclude",
+    "--exclude-dir",
+    "--file",
+    "--glob",
+    "--include",
+    "--label",
+    "--max-columns",
+    "--max-count",
+    "--max-filesize",
+    "--path-separator",
+    "--pre",
+    "--pre-glob",
+    "--replace",
+    "--sort",
+    "--sortr",
+    "--threads",
+    "--type",
+    "--type-add",
+    "--type-not",
+}
+
+
+@dataclass(frozen=True)
+class _ExecFileWritePreview:
+    path: str
+    preview: str
+    append: bool
+
+
+@dataclass(frozen=True)
+class _DiffChangePreview:
+    path: str
+    move_path: str
+    kind: str
+    added: int
+    removed: int
+    diff: str
+
+
+@dataclass(frozen=True)
+class _ExecSearchPreview:
+    query: str
+    paths: tuple[str, ...]
+
+    @property
+    def path(self) -> str:
+        if len(self.paths) == 1:
+            return self.paths[0]
+        return ""
+
+
+@dataclass(frozen=True)
+class _ExecExplorationPreview:
+    action: str
+    path: str
 
 
 class CodexAppServerError(RoomException):
     pass
+
+
+class _JsonRpcPendingRequest:
+    def __init__(
+        self,
+        *,
+        request_id: JsonRpcId,
+        future: asyncio.Future[Any],
+        pending: dict[JsonRpcId, asyncio.Future[Any]],
+    ):
+        self.request_id = request_id
+        self.future = future
+        self._pending = pending
+        self._released = False
+
+    async def wait(self) -> Any:
+        try:
+            return await self.future
+        finally:
+            self.abandon()
+
+    def abandon(self) -> None:
+        if self._released:
+            return
+
+        self._released = True
+        self._pending.pop(self.request_id, None)
+
+        if self.future.done():
+            if self.future.cancelled():
+                return
+            with contextlib.suppress(Exception):
+                self.future.result()
+            return
+
+        self.future.cancel()
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -201,7 +334,7 @@ class _CodexJsonRpcSession:
         self._forward_stdout = forward_stdout
         self._forward_stderr = forward_stderr
         self._verbose_rpc = verbose_rpc
-        self._request_timeout_s = request_timeout_s
+        del request_timeout_s
         self._server_request_handler = server_request_handler
 
         self._process: Optional[asyncio.subprocess.Process] = None
@@ -574,6 +707,18 @@ class _CodexJsonRpcSession:
     async def request(self, *, method: str, params: Optional[dict] = None) -> Any:
         return await self._request(method=method, params=params, ensure_started=True)
 
+    async def begin_request(
+        self,
+        *,
+        method: str,
+        params: Optional[dict] = None,
+    ) -> _JsonRpcPendingRequest:
+        return await self._begin_request(
+            method=method,
+            params=params,
+            ensure_started=True,
+        )
+
     async def notify(self, *, method: str, params: Optional[dict] = None) -> None:
         await self._notify(method=method, params=params, ensure_started=True)
 
@@ -588,6 +733,20 @@ class _CodexJsonRpcSession:
         params: Optional[dict] = None,
         ensure_started: bool,
     ) -> Any:
+        pending = await self._begin_request(
+            method=method,
+            params=params,
+            ensure_started=ensure_started,
+        )
+        return await pending.wait()
+
+    async def _begin_request(
+        self,
+        *,
+        method: str,
+        params: Optional[dict] = None,
+        ensure_started: bool,
+    ) -> _JsonRpcPendingRequest:
         if ensure_started:
             await self.start()
 
@@ -598,19 +757,25 @@ class _CodexJsonRpcSession:
         future = loop.create_future()
         self._pending[request_id] = future
 
-        await self._send_json(
-            {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": method,
-                "params": params or {},
-            }
-        )
-
         try:
-            return await asyncio.wait_for(future, timeout=self._request_timeout_s)
-        finally:
+            await self._send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params or {},
+                }
+            )
+        except Exception:
             self._pending.pop(request_id, None)
+            future.cancel()
+            raise
+
+        return _JsonRpcPendingRequest(
+            request_id=request_id,
+            future=future,
+            pending=self._pending,
+        )
 
     async def _notify(
         self,
@@ -642,15 +807,7 @@ class _CodexJsonRpcSession:
         if self._container_exec is not None:
             encoded = (json.dumps(payload) + "\n").encode("utf-8")
             async with self._write_lock:
-                try:
-                    await asyncio.wait_for(
-                        self._container_exec.write(encoded),
-                        timeout=min(30.0, self._request_timeout_s),
-                    )
-                except asyncio.TimeoutError as exc:
-                    raise CodexAppServerError(
-                        "timed out writing to codex app-server container stdin"
-                    ) from exc
+                await self._container_exec.write(encoded)
             return
 
         if self._process is None or self._process.stdin is None:
@@ -996,7 +1153,6 @@ class _CodexAppServerBackend:
         self._approval_policy = approval_policy
         self._sandbox_policy = sandbox_policy
         self._approval_request_handler = approval_request_handler
-        self._request_timeout_s = request_timeout_s
 
         launch_env = os.environ.copy()
         if env is not None:
@@ -1017,15 +1173,22 @@ class _CodexAppServerBackend:
             request_timeout_s=request_timeout_s,
             server_request_handler=self._handle_server_request,
         )
+        del request_timeout_s
         self._router_start_lock = asyncio.Lock()
         self._router_route_lock = asyncio.Lock()
         self._router_task: Optional[asyncio.Task] = None
         self._router_error: Optional[Exception] = None
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         self._turn_queues: dict[tuple[str, str], asyncio.Queue[dict]] = {}
         self._pending_turn_notifications: dict[tuple[str, str], deque[dict]] = {}
+        self._pending_turn_start_waiters: dict[str, deque[asyncio.Future[str]]] = {}
+        self._terminal_turn_notifications: set[tuple[str, str]] = set()
         self._thread_states: dict[str, _CodexThreadState] = {}
         self._thread_keys_by_thread_id: dict[str, str] = {}
         self._active_turns: dict[str, set[tuple[str, str]]] = {}
+        self._pending_turn_starts: dict[str, int] = {}
+        self._interrupt_requested_threads: set[str] = set()
+        self._interrupt_requests_in_flight: set[tuple[str, str]] = set()
 
     def _normalized_sandbox_mode(self) -> Optional[str]:
         raw = self._sandbox_policy
@@ -1056,6 +1219,14 @@ class _CodexAppServerBackend:
         }
 
     async def close(self) -> None:
+        background_tasks = list(self._background_tasks)
+        for task in background_tasks:
+            task.cancel()
+        for task in background_tasks:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        self._background_tasks.clear()
+
         if self._router_task is not None:
             self._router_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -1065,10 +1236,15 @@ class _CodexAppServerBackend:
         async with self._router_route_lock:
             self._turn_queues.clear()
             self._pending_turn_notifications.clear()
+            self._pending_turn_start_waiters.clear()
+            self._terminal_turn_notifications.clear()
 
         self._thread_states.clear()
         self._thread_keys_by_thread_id.clear()
         self._active_turns.clear()
+        self._pending_turn_starts.clear()
+        self._interrupt_requested_threads.clear()
+        self._interrupt_requests_in_flight.clear()
 
         self._router_error = None
         await self._session.close()
@@ -1158,6 +1334,13 @@ class _CodexAppServerBackend:
         if previous is not None:
             self._thread_keys_by_thread_id.pop(previous.thread_id, None)
 
+        active_turns = list(self._active_turns.pop(thread_key, set()))
+        for thread_id, turn_id in active_turns:
+            self._interrupt_requests_in_flight.discard((thread_id, turn_id))
+
+        self._pending_turn_starts.pop(thread_key, None)
+        self._interrupt_requested_threads.discard(thread_key)
+
     async def _thread_key_for_thread_id(self, *, thread_id: str) -> Optional[str]:
         thread_key = self._thread_keys_by_thread_id.get(thread_id)
         if thread_key is not None:
@@ -1169,6 +1352,93 @@ class _CodexAppServerBackend:
                 return key
 
         return None
+
+    def _track_background_task(
+        self,
+        *,
+        coroutine: Awaitable[Any],
+        description: str,
+        cleanup: Optional[Callable[[], None]] = None,
+    ) -> None:
+        task = asyncio.create_task(coroutine)
+        self._background_tasks.add(task)
+
+        def _on_done(completed: asyncio.Task[Any]) -> None:
+            self._background_tasks.discard(completed)
+            if cleanup is not None:
+                with contextlib.suppress(Exception):
+                    cleanup()
+            try:
+                completed.result()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.warning(description, exc_info=exc)
+
+        task.add_done_callback(_on_done)
+
+    def _track_pending_turn_start(self, *, thread_key: str) -> None:
+        self._pending_turn_starts[thread_key] = (
+            self._pending_turn_starts.get(thread_key, 0) + 1
+        )
+
+    def _untrack_pending_turn_start(self, *, thread_key: str) -> None:
+        count = self._pending_turn_starts.get(thread_key)
+        if count is None:
+            return
+        if count <= 1:
+            self._pending_turn_starts.pop(thread_key, None)
+            return
+        self._pending_turn_starts[thread_key] = count - 1
+
+    def _register_pending_turn_start_waiter(
+        self,
+        *,
+        thread_id: str,
+    ) -> asyncio.Future[str]:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+        waiters = self._pending_turn_start_waiters.get(thread_id)
+        if waiters is None:
+            waiters = deque()
+            self._pending_turn_start_waiters[thread_id] = waiters
+        waiters.append(future)
+        return future
+
+    def _resolve_pending_turn_start_waiter(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+    ) -> None:
+        waiters = self._pending_turn_start_waiters.get(thread_id)
+        if waiters is None:
+            return
+
+        while waiters:
+            waiter = waiters.popleft()
+            if waiter.done():
+                continue
+            waiter.set_result(turn_id)
+            break
+
+        if len(waiters) == 0:
+            self._pending_turn_start_waiters.pop(thread_id, None)
+
+    def _unregister_pending_turn_start_waiter(
+        self,
+        *,
+        thread_id: str,
+        waiter: asyncio.Future[str],
+    ) -> None:
+        waiters = self._pending_turn_start_waiters.get(thread_id)
+        if waiters is None:
+            return
+
+        with contextlib.suppress(ValueError):
+            waiters.remove(waiter)
+        if len(waiters) == 0:
+            self._pending_turn_start_waiters.pop(thread_id, None)
 
     def _normalize_approval_decision(self, *, decision: Any) -> str:
         if isinstance(decision, str):
@@ -1337,18 +1607,42 @@ class _CodexAppServerBackend:
         await self._clear_thread_state(thread_key=thread_key)
 
     async def on_thread_cancel(self, *, thread_key: str) -> None:
-        active_turns = list(self._active_turns.pop(thread_key, set()))
+        active_turns = list(self._active_turns.get(thread_key, set()))
+        if len(active_turns) == 0:
+            if self._pending_turn_starts.get(thread_key, 0) > 0:
+                self._interrupt_requested_threads.add(thread_key)
+            else:
+                self._interrupt_requested_threads.discard(thread_key)
+            return
 
+        failures: list[Exception] = []
         for thread_id, turn_id in active_turns:
-            with contextlib.suppress(Exception):
-                await self._session.request(
-                    method="turn/interrupt",
-                    params={"threadId": thread_id, "turnId": turn_id},
+            try:
+                await self._request_turn_interrupt_detached(
+                    thread_key=thread_key,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
                 )
+            except Exception as exc:
+                failures.append(exc)
+
+        if len(failures) == 1:
+            raise failures[0]
+        if len(failures) > 1:
+            raise CodexAppServerError(
+                f"failed to interrupt {len(failures)} codex turns"
+            )
 
     async def on_thread_close(self, *, thread_key: str) -> None:
         await self.on_thread_cancel(thread_key=thread_key)
         await self._clear_thread_state(thread_key=thread_key)
+
+    def has_active_turn(self, *, thread_key: str) -> bool:
+        active_turns = self._active_turns.get(thread_key)
+        if active_turns is not None and len(active_turns) > 0:
+            return True
+
+        return self._pending_turn_starts.get(thread_key, 0) > 0
 
     async def _active_turn_id_for_thread(
         self, *, thread_key: str, thread_id: str
@@ -1489,6 +1783,64 @@ class _CodexAppServerBackend:
 
         return thread_id, turn_id
 
+    def _is_terminal_turn_notification(self, *, method: Optional[str]) -> bool:
+        if not isinstance(method, str):
+            return False
+
+        return method.lower() in (
+            "turn/completed",
+            "turn/cancelled",
+            "turn/canceled",
+            "turn/interrupted",
+            "turn/aborted",
+        )
+
+    def _notification_tracks_active_turn(
+        self,
+        *,
+        method: Optional[str],
+        params: dict,
+    ) -> bool:
+        if not isinstance(method, str):
+            return False
+        if self._is_terminal_turn_notification(method=method):
+            return False
+
+        lower = method.lower()
+        if lower == "codex/event/task_complete":
+            return True
+
+        status = self._status_from_notification(method=method, params=params)
+        return status in ("queued", "in_progress")
+
+    async def _request_turn_interrupt_detached(
+        self,
+        *,
+        thread_key: str,
+        thread_id: str,
+        turn_id: str,
+    ) -> None:
+        key = (thread_id, turn_id)
+        if key in self._interrupt_requests_in_flight:
+            self._interrupt_requested_threads.discard(thread_key)
+            return
+
+        pending = await self._session.begin_request(
+            method="turn/interrupt",
+            params={"threadId": thread_id, "turnId": turn_id},
+        )
+
+        self._interrupt_requests_in_flight.add(key)
+        self._interrupt_requested_threads.discard(thread_key)
+        self._track_background_task(
+            coroutine=pending.wait(),
+            description=(
+                "codex turn interrupt ack failed for "
+                f"thread '{thread_key}' turn '{turn_id}'"
+            ),
+            cleanup=lambda: self._interrupt_requests_in_flight.discard(key),
+        )
+
     async def _route_notifications(self) -> None:
         try:
             while True:
@@ -1515,6 +1867,48 @@ class _CodexAppServerBackend:
                     continue
 
                 key = (thread_id, turn_id)
+                method = notification.get("method")
+                params = notification.get("params") or {}
+                if not isinstance(params, dict):
+                    params = {}
+
+                self._resolve_pending_turn_start_waiter(
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                )
+
+                if self._is_terminal_turn_notification(method=method):
+                    self._terminal_turn_notifications.add(key)
+                    self._interrupt_requests_in_flight.discard(key)
+                    thread_key = await self._thread_key_for_thread_id(
+                        thread_id=thread_id
+                    )
+                    if thread_key is not None:
+                        await self._untrack_active_turn(
+                            thread_key=thread_key,
+                            thread_id=thread_id,
+                            turn_id=turn_id,
+                        )
+                elif self._notification_tracks_active_turn(
+                    method=method,
+                    params=params,
+                ):
+                    thread_key = await self._thread_key_for_thread_id(
+                        thread_id=thread_id
+                    )
+                    if thread_key is not None:
+                        await self._track_active_turn(
+                            thread_key=thread_key,
+                            thread_id=thread_id,
+                            turn_id=turn_id,
+                        )
+                        if thread_key in self._interrupt_requested_threads:
+                            await self._request_turn_interrupt_detached(
+                                thread_key=thread_key,
+                                thread_id=thread_id,
+                                turn_id=turn_id,
+                            )
+
                 async with self._router_route_lock:
                     queue = self._turn_queues.get(key)
                     if queue is not None:
@@ -1582,6 +1976,7 @@ class _CodexAppServerBackend:
         key = (thread_id, turn_id)
         async with self._router_route_lock:
             self._turn_queues.pop(key, None)
+            self._terminal_turn_notifications.discard(key)
 
     async def _next_turn_notification(
         self,
@@ -1950,19 +2345,18 @@ class _CodexAppServerBackend:
 
         return None
 
-    def _extract_exec_action_details(self, *, item: dict) -> list[str]:
+    def _exec_actions(self, *, item: dict) -> list[dict]:
         raw_actions = item.get("commandActions")
         if not isinstance(raw_actions, list):
             raw_actions = item.get("command_actions")
         if not isinstance(raw_actions, list):
             return []
+        return [action for action in raw_actions if isinstance(action, dict)]
 
+    def _extract_exec_action_details(self, *, item: dict) -> list[str]:
         details: list[str] = []
         seen: set[str] = set()
-        for action in raw_actions:
-            if not isinstance(action, dict):
-                continue
-
+        for action in self._exec_actions(item=item):
             detail = self._command_action_detail(action=action)
             if detail is None:
                 continue
@@ -1974,6 +2368,482 @@ class _CodexAppServerBackend:
             details.append(detail)
 
         return details
+
+    def _exec_positional_tokens(
+        self,
+        *,
+        argv: list[str],
+        value_flags: set[str],
+    ) -> list[str]:
+        tokens: list[str] = []
+        after_separator = False
+        index = 1
+        while index < len(argv):
+            token = argv[index]
+            if not after_separator and token == "--":
+                after_separator = True
+                index += 1
+                continue
+
+            if not after_separator and token in value_flags:
+                index += 2
+                continue
+
+            if not after_separator and token.startswith("--") and "=" in token:
+                index += 1
+                continue
+
+            if not after_separator and token.startswith("-") and token != "-":
+                index += 1
+                continue
+
+            tokens.append(token)
+            index += 1
+
+        return tokens
+
+    def _select_exec_target_path(
+        self,
+        *,
+        candidate: str,
+        hint: str,
+    ) -> str:
+        normalized_hint = hint.strip()
+        normalized_candidate = candidate.strip()
+        if normalized_candidate != "":
+            if normalized_hint == "":
+                return normalized_candidate
+            if normalized_candidate == normalized_hint:
+                return normalized_candidate
+            if Path(normalized_candidate).name == Path(normalized_hint).name:
+                return normalized_candidate
+        return normalized_hint
+
+    def _exec_read_path_from_argv(self, *, argv: list[str]) -> str:
+        if len(argv) == 0:
+            return ""
+
+        executable = Path(argv[0]).name.lower()
+        if executable == "sed":
+            tokens = self._exec_positional_tokens(
+                argv=argv,
+                value_flags={"-e", "-f"},
+            )
+            if len(tokens) >= 2:
+                return tokens[-1]
+            return ""
+
+        if executable in {"head", "tail"}:
+            tokens = self._exec_positional_tokens(
+                argv=argv,
+                value_flags=_EXEC_READ_VALUE_FLAGS,
+            )
+            if len(tokens) == 1:
+                return tokens[0]
+            return ""
+
+        if executable in _EXEC_READ_COMMANDS:
+            tokens = self._exec_positional_tokens(
+                argv=argv,
+                value_flags=set(),
+            )
+            if len(tokens) == 1:
+                return tokens[0]
+            return ""
+
+        return ""
+
+    def _exec_list_path_from_argv(self, *, argv: list[str]) -> str:
+        if len(argv) == 0:
+            return ""
+
+        executable = Path(argv[0]).name.lower()
+        if executable not in _EXEC_LIST_COMMANDS:
+            return ""
+
+        tokens = self._exec_positional_tokens(
+            argv=argv,
+            value_flags=_EXEC_LIST_VALUE_FLAGS,
+        )
+        if len(tokens) == 1:
+            return tokens[0]
+        return ""
+
+    def _exec_target_path_from_command(
+        self,
+        *,
+        item: dict,
+        action: str,
+        hint: str,
+    ) -> str:
+        command = self._extract_exec_command(item=item)
+        if command == "":
+            return hint.strip()
+
+        script = self._extract_exec_script(command=command)
+        if script == "":
+            return hint.strip()
+
+        with contextlib.suppress(ValueError):
+            argv = shlex.split(script)
+            if len(argv) == 0:
+                return hint.strip()
+
+            candidate = ""
+            if action == "read":
+                candidate = self._exec_read_path_from_argv(argv=argv)
+            elif action == "list":
+                candidate = self._exec_list_path_from_argv(argv=argv)
+
+            return self._select_exec_target_path(
+                candidate=candidate,
+                hint=hint,
+            )
+
+        return hint.strip()
+
+    def _is_shell_command_flag(self, *, token: str) -> bool:
+        if not isinstance(token, str) or len(token) <= 1 or not token.startswith("-"):
+            return False
+
+        flags = token[1:]
+        return "c" in flags and all(flag in ("c", "l") for flag in flags)
+
+    def _unquote_shell_token(self, *, token: str) -> str:
+        normalized = token.strip()
+        if normalized == "":
+            return ""
+
+        with contextlib.suppress(ValueError):
+            parts = shlex.split(normalized)
+            if len(parts) == 1:
+                return parts[0]
+
+        if len(normalized) >= 2 and normalized[0] == normalized[-1]:
+            if normalized[0] in ("'", '"'):
+                return normalized[1:-1]
+
+        return normalized
+
+    def _extract_exec_script(self, *, command: str) -> str:
+        normalized = command.strip()
+        if normalized == "":
+            return ""
+
+        with contextlib.suppress(ValueError):
+            argv = shlex.split(normalized)
+            for index, token in enumerate(argv[:-1]):
+                if self._is_shell_command_flag(token=token):
+                    script = argv[index + 1]
+                    if isinstance(script, str) and script.strip() != "":
+                        return script
+
+        return normalized
+
+    def _extract_exec_file_write_preview(
+        self,
+        *,
+        item: dict,
+    ) -> Optional[_ExecFileWritePreview]:
+        command = self._extract_exec_command(item=item)
+        if command == "":
+            return None
+
+        script = self._extract_exec_script(command=command)
+        match = None
+        for candidate in (
+            _EXEC_FILE_WRITE_HEREDOC_RE,
+            _EXEC_FILE_WRITE_HEREDOC_REDIRECT_AFTER_RE,
+        ):
+            match = candidate.match(script)
+            if match is not None:
+                break
+        if match is None:
+            return None
+
+        path = self._unquote_shell_token(token=match.group("path"))
+        if path == "":
+            return None
+
+        preview = match.group("content").replace("\r\n", "\n")
+        preview = self._truncate_text(
+            text=preview,
+            limit=EXEC_FILE_WRITE_PREVIEW_LIMIT,
+        )
+
+        return _ExecFileWritePreview(
+            path=path,
+            preview=preview,
+            append=match.group("redirect") == ">>",
+        )
+
+    def _exec_search_option_parts(self, *, token: str) -> tuple[str, str | None]:
+        if token.startswith("--") and "=" in token:
+            flag, _, value = token.partition("=")
+            return flag, value
+        return token, None
+
+    def _is_exec_search_short_value_flag(self, *, token: str) -> bool:
+        if len(token) <= 2 or not token.startswith("-") or token.startswith("--"):
+            return False
+        return token[:2] in _EXEC_SEARCH_SHORT_VALUE_FLAGS
+
+    def _extract_exec_search_preview(
+        self,
+        *,
+        item: dict,
+    ) -> Optional[_ExecSearchPreview]:
+        command = self._extract_exec_command(item=item)
+        if command == "":
+            return None
+
+        script = self._extract_exec_script(command=command)
+        if script == "":
+            return None
+
+        with contextlib.suppress(ValueError):
+            argv = shlex.split(script)
+            if len(argv) == 0:
+                return None
+
+            if any(token in {"|", "&&", "||", ";"} for token in argv[1:]):
+                return None
+
+            executable = Path(argv[0]).name.lower()
+            if executable not in _EXEC_SEARCH_COMMANDS:
+                return None
+
+            query = ""
+            paths: list[str] = []
+            after_separator = False
+            index = 1
+            while index < len(argv):
+                token = argv[index]
+                if not after_separator and token == "--":
+                    after_separator = True
+                    index += 1
+                    continue
+
+                flag, attached_value = self._exec_search_option_parts(token=token)
+                if not after_separator and flag in _EXEC_SEARCH_QUERY_FLAGS:
+                    if attached_value is not None and attached_value != "":
+                        if query == "":
+                            query = attached_value
+                        index += 1
+                        continue
+                    if index + 1 >= len(argv):
+                        return None
+                    if query == "":
+                        query = argv[index + 1]
+                    index += 2
+                    continue
+
+                if not after_separator and token.startswith("-e") and token != "-e":
+                    if query == "":
+                        query = token[2:]
+                    index += 1
+                    continue
+
+                if not after_separator and flag in _EXEC_SEARCH_LONG_VALUE_FLAGS:
+                    index += 1 if attached_value is not None else 2
+                    continue
+
+                if not after_separator and self._is_exec_search_short_value_flag(
+                    token=token
+                ):
+                    index += 1
+                    continue
+
+                if not after_separator and token.startswith("-") and token != "-":
+                    index += 1
+                    continue
+
+                if query == "":
+                    query = token
+                else:
+                    paths.append(token)
+                index += 1
+
+            query = query.strip()
+            normalized_paths = tuple(
+                path.strip()
+                for path in paths
+                if isinstance(path, str) and path.strip() != ""
+            )
+            if query == "":
+                return None
+            return _ExecSearchPreview(query=query, paths=normalized_paths)
+
+        return None
+
+    def _extract_exec_exploration_preview(
+        self,
+        *,
+        item: dict,
+    ) -> Optional[_ExecExplorationPreview]:
+        for action in self._exec_actions(item=item):
+            type_name = action.get("type")
+            if not isinstance(type_name, str):
+                continue
+
+            normalized = self._normalize_name(value=type_name)
+            if normalized == "read":
+                hint = self._first_text(source=action, keys=("path", "name"))
+                path = self._exec_target_path_from_command(
+                    item=item,
+                    action="read",
+                    hint=hint,
+                )
+                if path != "":
+                    return _ExecExplorationPreview(action="read", path=path)
+
+            if normalized == "listfiles":
+                hint = self._first_text(source=action, keys=("path",))
+                path = self._exec_target_path_from_command(
+                    item=item,
+                    action="list",
+                    hint=hint,
+                )
+                if path != "":
+                    return _ExecExplorationPreview(action="list", path=path)
+
+        return None
+
+    def _exec_search_target(self, *, search_preview: _ExecSearchPreview) -> str:
+        if search_preview.path != "":
+            return search_preview.path
+        if len(search_preview.paths) > 1:
+            return f"{len(search_preview.paths)} paths"
+        return search_preview.query
+
+    def _exec_search_headline(
+        self,
+        *,
+        status: str,
+        search_preview: _ExecSearchPreview,
+    ) -> str:
+        target = self._exec_search_target(search_preview=search_preview)
+        uses_query_as_target = (
+            search_preview.path == "" and len(search_preview.paths) == 0
+        )
+        if status == "failed":
+            text = (
+                f"Search Failed for {target}"
+                if uses_query_as_target
+                else f"Search Failed: {target}"
+            )
+        elif status == "cancelled":
+            text = (
+                f"Search Cancelled for {target}"
+                if uses_query_as_target
+                else f"Search Cancelled: {target}"
+            )
+        elif self._is_active_state(state=status):
+            text = (
+                f"Searching for {target}"
+                if uses_query_as_target
+                else f"Searching {target}"
+            )
+        elif status == "completed":
+            text = (
+                f"Searched for {target}"
+                if uses_query_as_target
+                else f"Searched {target}"
+            )
+        else:
+            text = (
+                f"Search for {target}" if uses_query_as_target else f"Search {target}"
+            )
+        return self._truncate_text(text=text, limit=280)
+
+    def _exec_search_details(
+        self,
+        *,
+        search_preview: _ExecSearchPreview,
+    ) -> list[str]:
+        details: list[str] = []
+        if search_preview.path != "" or len(search_preview.paths) > 1:
+            details.append(
+                self._truncate_text(
+                    text=f"Pattern: {search_preview.query}",
+                    limit=EXEC_SEARCH_DETAIL_LIMIT,
+                )
+            )
+        if len(search_preview.paths) > 1:
+            details.append(
+                self._truncate_text(
+                    text="Paths: " + ", ".join(search_preview.paths),
+                    limit=EXEC_SEARCH_DETAIL_LIMIT,
+                )
+            )
+        return details
+
+    def _exec_exploration_headline(
+        self,
+        *,
+        status: str,
+        exploration_preview: _ExecExplorationPreview,
+    ) -> str:
+        path = exploration_preview.path
+        if exploration_preview.action == "read":
+            if status == "failed":
+                return f"Read Failed: {path}"
+            if status == "cancelled":
+                return f"Read Cancelled: {path}"
+            if self._is_active_state(state=status):
+                return f"Reading {path}"
+            if status == "completed":
+                return f"Read {path}"
+            return f"Read {path}"
+
+        if exploration_preview.action == "list":
+            if status == "failed":
+                return f"List Failed: {path}"
+            if status == "cancelled":
+                return f"List Cancelled: {path}"
+            if self._is_active_state(state=status):
+                return f"Listing {path}"
+            if status == "completed":
+                return f"Listed {path}"
+            return f"List {path}"
+
+        if status == "failed":
+            return f"Exploration Failed: {path}"
+        if status == "cancelled":
+            return f"Exploration Cancelled: {path}"
+        if self._is_active_state(state=status):
+            return f"Exploring {path}"
+        if status == "completed":
+            return f"Explored {path}"
+        return f"Explore {path}"
+
+    def _file_write_headline(
+        self,
+        *,
+        status: str,
+        file_write_preview: _ExecFileWritePreview,
+    ) -> str:
+        path = file_write_preview.path
+        if file_write_preview.append:
+            if status == "failed":
+                return f"Append Failed: {path}"
+            if status == "cancelled":
+                return f"Append Cancelled: {path}"
+            if self._is_active_state(state=status):
+                return f"Appending {path}"
+            if status == "completed":
+                return f"Appended {path}"
+            return f"Append {path}"
+
+        if status == "failed":
+            return f"Create Failed: {path}"
+        if status == "cancelled":
+            return f"Create Cancelled: {path}"
+        if self._is_active_state(state=status):
+            return f"Creating {path}"
+        if status == "completed":
+            return f"Created {path}"
+        return f"Create {path}"
 
     def _is_exploration_actions(self, *, action_details: list[str]) -> bool:
         if len(action_details) == 0:
@@ -1988,8 +2858,30 @@ class _CodexAppServerBackend:
         return True
 
     def _exec_display(
-        self, *, status: str, item: dict
+        self,
+        *,
+        status: str,
+        item: dict,
+        file_write_preview: Optional[_ExecFileWritePreview] = None,
+        search_preview: Optional[_ExecSearchPreview] = None,
+        exploration_preview: Optional[_ExecExplorationPreview] = None,
     ) -> tuple[Optional[str], list[str]]:
+        if file_write_preview is not None:
+            return self._file_write_headline(
+                status=status,
+                file_write_preview=file_write_preview,
+            ), []
+        if search_preview is not None:
+            return self._exec_search_headline(
+                status=status,
+                search_preview=search_preview,
+            ), self._exec_search_details(search_preview=search_preview)
+        if exploration_preview is not None:
+            return self._exec_exploration_headline(
+                status=status,
+                exploration_preview=exploration_preview,
+            ), []
+
         command = self._extract_exec_command(item=item)
         action_details = self._extract_exec_action_details(item=item)
         if command == "" and len(action_details) == 0:
@@ -2102,7 +2994,20 @@ class _CodexAppServerBackend:
         status: str,
         item: dict,
         headline: Optional[str],
+        search_preview: Optional[_ExecSearchPreview] = None,
+        exploration_preview: Optional[_ExecExplorationPreview] = None,
     ) -> Optional[str]:
+        if search_preview is not None:
+            return self._exec_search_headline(
+                status=status,
+                search_preview=search_preview,
+            )
+        if exploration_preview is not None:
+            return self._exec_exploration_headline(
+                status=status,
+                exploration_preview=exploration_preview,
+            )
+
         action_details = self._extract_exec_action_details(item=item)
         for detail in action_details:
             text = detail.strip()
@@ -2187,6 +3092,84 @@ class _CodexAppServerBackend:
                 break
         return lines
 
+    def _parse_diff_changes(self, *, item: dict) -> list[_DiffChangePreview]:
+        raw_changes = item.get("changes")
+        if not isinstance(raw_changes, list) or len(raw_changes) == 0:
+            return []
+
+        changes: list[_DiffChangePreview] = []
+        for change in raw_changes:
+            if not isinstance(change, dict):
+                continue
+
+            path = self._first_text(source=change, keys=("path",))
+            diff = self._first_text(source=change, keys=("diff",))
+
+            raw_kind = change.get("kind")
+            kind_type = ""
+            move_path = ""
+            if isinstance(raw_kind, str):
+                kind_type = raw_kind
+            elif isinstance(raw_kind, dict):
+                kind_type = self._first_text(source=raw_kind, keys=("type",))
+                move_path = self._first_text(
+                    source=raw_kind,
+                    keys=("movePath", "move_path"),
+                )
+
+            if path == "" and move_path != "":
+                path = move_path
+            if path == "":
+                continue
+
+            added, removed = self._diff_line_counts(diff=diff, kind=kind_type)
+            changes.append(
+                _DiffChangePreview(
+                    path=path,
+                    move_path=move_path,
+                    kind=kind_type,
+                    added=added,
+                    removed=removed,
+                    diff=diff,
+                )
+            )
+
+        return changes
+
+    def _diff_event_path(self, *, changes: list[_DiffChangePreview]) -> str:
+        if len(changes) != 1:
+            return ""
+
+        change = changes[0]
+        if change.move_path != "":
+            return change.move_path
+        return change.path
+
+    def _diff_preview(self, *, changes: list[_DiffChangePreview]) -> str:
+        preview_changes: list[dict[str, str]] = []
+        for change in changes:
+            normalized_diff = change.diff.replace("\r\n", "\n").strip("\n")
+            if normalized_diff == "":
+                continue
+
+            preview_change = {
+                "path": change.path,
+                "diff": self._truncate_text(
+                    text=normalized_diff,
+                    limit=DIFF_PREVIEW_LIMIT,
+                ),
+            }
+            if change.move_path != "":
+                preview_change["move_path"] = change.move_path
+            if change.kind != "":
+                preview_change["kind"] = change.kind
+            preview_changes.append(preview_change)
+
+        if len(preview_changes) == 0:
+            return ""
+
+        return json.dumps({"changes": preview_changes}, ensure_ascii=False)
+
     def _plan_lines(self, *, params: dict) -> list[str]:
         raw_plan = params.get("plan")
         if not isinstance(raw_plan, list):
@@ -2217,6 +3200,10 @@ class _CodexAppServerBackend:
         status: str,
         kind: str,
         item: dict,
+        file_write_preview: Optional[_ExecFileWritePreview] = None,
+        search_preview: Optional[_ExecSearchPreview] = None,
+        exploration_preview: Optional[_ExecExplorationPreview] = None,
+        diff_changes: Optional[list[_DiffChangePreview]] = None,
     ) -> tuple[Optional[str], list[str]]:
         if kind == "plan" and method.lower().startswith("turn/plan/"):
             lines = self._plan_lines(params=params)
@@ -2226,64 +3213,50 @@ class _CodexAppServerBackend:
             return headline, lines
 
         if kind == "exec":
-            return self._exec_display(status=status, item=item)
+            return self._exec_display(
+                status=status,
+                item=item,
+                file_write_preview=file_write_preview,
+                search_preview=search_preview,
+                exploration_preview=exploration_preview,
+            )
 
         if kind == "reasoning":
             return self._reasoning_display(status=status, params=params, item=item)
 
         if kind == "diff":
-            raw_changes = item.get("changes")
-            if not isinstance(raw_changes, list) or len(raw_changes) == 0:
-                return None, []
-
-            changes: list[tuple[str, str, str, int, int, str]] = []
-            total_added = 0
-            total_removed = 0
-            for change in raw_changes:
-                if not isinstance(change, dict):
-                    continue
-                path = self._first_text(source=change, keys=("path",))
-                diff = self._first_text(source=change, keys=("diff",))
-
-                raw_kind = change.get("kind")
-                kind_type = ""
-                move_path = ""
-                if isinstance(raw_kind, str):
-                    kind_type = raw_kind
-                elif isinstance(raw_kind, dict):
-                    kind_type = self._first_text(source=raw_kind, keys=("type",))
-                    move_path = self._first_text(
-                        source=raw_kind, keys=("movePath", "move_path")
-                    )
-
-                if path == "":
-                    continue
-
-                added, removed = self._diff_line_counts(diff=diff, kind=kind_type)
-                total_added += added
-                total_removed += removed
-                changes.append((path, move_path, kind_type, added, removed, diff))
-
+            changes = (
+                diff_changes
+                if diff_changes is not None
+                else self._parse_diff_changes(item=item)
+            )
             if len(changes) == 0:
                 return None, []
 
+            total_added = sum(change.added for change in changes)
+            total_removed = sum(change.removed for change in changes)
+
             if len(changes) == 1:
-                path, move_path, kind_type, added, removed, diff = changes[0]
-                normalized_kind = self._normalize_name(value=kind_type)
+                change = changes[0]
+                normalized_kind = self._normalize_name(value=change.kind)
                 verb = "Edited"
                 if normalized_kind == "add":
                     verb = "Added"
                 elif normalized_kind == "delete":
                     verb = "Deleted"
 
-                path_display = path if move_path == "" else f"{path} \u2192 {move_path}"
+                path_display = (
+                    change.path
+                    if change.move_path == ""
+                    else f"{change.path} \u2192 {change.move_path}"
+                )
                 headline = (
                     f"{verb} {path_display} "
-                    f"{self._line_count_summary(added=added, removed=removed)}"
+                    f"{self._line_count_summary(added=change.added, removed=change.removed)}"
                 )
                 detail_lines = self._file_change_preview_lines(
-                    diff=diff,
-                    kind=kind_type,
+                    diff=change.diff,
+                    kind=change.kind,
                 )
                 return headline, detail_lines
 
@@ -2293,11 +3266,15 @@ class _CodexAppServerBackend:
                 f"{self._line_count_summary(added=total_added, removed=total_removed)}"
             )
             detail_lines: list[str] = []
-            for path, move_path, _, added, removed, _ in changes:
-                path_display = path if move_path == "" else f"{path} \u2192 {move_path}"
+            for change in changes:
+                path_display = (
+                    change.path
+                    if change.move_path == ""
+                    else f"{change.path} \u2192 {change.move_path}"
+                )
                 detail_lines.append(
                     f"{path_display} "
-                    f"{self._line_count_summary(added=added, removed=removed)}"
+                    f"{self._line_count_summary(added=change.added, removed=change.removed)}"
                 )
             return headline, detail_lines
 
@@ -2550,6 +3527,18 @@ class _CodexAppServerBackend:
         )
         return turn_id, item_id
 
+    def _exploration_event_path(
+        self,
+        *,
+        search_preview: Optional[_ExecSearchPreview],
+        exploration_preview: Optional[_ExecExplorationPreview],
+    ) -> str:
+        if search_preview is not None and search_preview.path != "":
+            return search_preview.path
+        if exploration_preview is not None:
+            return exploration_preview.path
+        return ""
+
     def _event_key(
         self,
         *,
@@ -2627,17 +3616,45 @@ class _CodexAppServerBackend:
         item = self._extract_item(params=params)
         item_type = _item_type(item)
         kind = self._event_kind(method=method, item_type=item_type)
+        file_write_preview = None
+        search_preview = None
+        exploration_preview = None
+        diff_changes: Optional[list[_DiffChangePreview]] = None
+        diff_path = ""
+        diff_preview = ""
+        if kind == "exec":
+            file_write_preview = self._extract_exec_file_write_preview(item=item)
+            if file_write_preview is None:
+                search_preview = self._extract_exec_search_preview(item=item)
+            if file_write_preview is None and search_preview is None:
+                exploration_preview = self._extract_exec_exploration_preview(item=item)
+        elif kind == "diff":
+            diff_changes = self._parse_diff_changes(item=item)
+            diff_path = self._diff_event_path(changes=diff_changes)
+            diff_preview = self._diff_preview(changes=diff_changes)
         correlation_key = self._event_key(
             method=method,
             turn_id=turn_id,
             item_id=item_id,
         )
+        retain_correlation = False
+        exploration_path = self._exploration_event_path(
+            search_preview=search_preview,
+            exploration_preview=exploration_preview,
+        )
+        if kind == "exec" and turn_id is not None and exploration_path != "":
+            correlation_key = f"turn.explore:{turn_id}:{exploration_path}"
+            retain_correlation = True
         headline, detail_lines = self._event_display(
             method=method,
             params=params,
             status=status,
             kind=kind,
             item=item,
+            file_write_preview=file_write_preview,
+            search_preview=search_preview,
+            exploration_preview=exploration_preview,
+            diff_changes=diff_changes,
         )
         summary = self._status_summary(
             method=method,
@@ -2649,6 +3666,8 @@ class _CodexAppServerBackend:
                 status=status,
                 item=item,
                 headline=headline,
+                search_preview=search_preview,
+                exploration_preview=exploration_preview,
             )
             if exec_summary is not None:
                 summary = exec_summary
@@ -2663,7 +3682,7 @@ class _CodexAppServerBackend:
         elif isinstance(headline, str) and headline.strip() != "":
             summary = self._truncate_text(text=headline.strip(), limit=280)
 
-        return {
+        event = {
             "type": "agent.event",
             "source": "codex",
             "name": event_type,
@@ -2678,6 +3697,23 @@ class _CodexAppServerBackend:
             "summary": summary,
             "data": self._stringify_status_payload(value=params),
         }
+        if retain_correlation:
+            event["retain_correlation"] = True
+        if file_write_preview is not None:
+            event["path"] = file_write_preview.path
+            if file_write_preview.preview != "":
+                event["preview"] = file_write_preview.preview
+        elif search_preview is not None:
+            if search_preview.path != "":
+                event["path"] = search_preview.path
+        elif exploration_preview is not None:
+            event["path"] = exploration_preview.path
+        elif kind == "diff":
+            if diff_path != "":
+                event["path"] = diff_path
+            if diff_preview != "":
+                event["preview"] = diff_preview
+        return event
 
     async def next(
         self,
@@ -2697,8 +3733,6 @@ class _CodexAppServerBackend:
         resolved_model = self._resolve_model(model=model)
         turn_input = self._normalize_turn_input(message=message)
 
-        await self._ensure_router_started(room=room)
-
         thread_state = await self._get_thread_state(thread_key=thread_key)
         if thread_state is None:
             raise CodexAppServerError(
@@ -2716,8 +3750,13 @@ class _CodexAppServerBackend:
         # chunks. Lock to the first variant seen per turn to avoid duplicating
         # streamed text.
         message_delta_mode: Optional[str] = None
+        turn_start_waiter = self._register_pending_turn_start_waiter(
+            thread_id=thread_id,
+        )
+        self._track_pending_turn_start(thread_key=thread_key)
 
         try:
+            await self._ensure_router_started(room=room)
             normalized_instructions = self._normalize_developer_instructions(
                 developer_instructions=developer_instructions
             )
@@ -2739,12 +3778,23 @@ class _CodexAppServerBackend:
                     },
                 }
 
-            turn_result = await self._session.request(
+            turn_start_request = await self._session.begin_request(
                 method="turn/start",
                 params=turn_params,
             )
+            done, _pending = await asyncio.wait(
+                {turn_start_request.future, turn_start_waiter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            del _pending
 
-            turn_id = self._extract_turn_id(turn_result)
+            if turn_start_request.future in done:
+                turn_result = await turn_start_request.wait()
+                turn_id = self._extract_turn_id(turn_result)
+            else:
+                turn_id = turn_start_waiter.result()
+                turn_start_request.abandon()
+
             await self._track_active_turn(
                 thread_key=thread_key,
                 thread_id=thread_id,
@@ -2754,6 +3804,15 @@ class _CodexAppServerBackend:
                 thread_id=thread_id,
                 turn_id=turn_id,
             )
+            if (
+                thread_key in self._interrupt_requested_threads
+                and (thread_id, turn_id) not in self._terminal_turn_notifications
+            ):
+                await self._request_turn_interrupt_detached(
+                    thread_key=thread_key,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                )
 
             while True:
                 notification = await self._next_turn_notification(turn_queue=turn_queue)
@@ -2888,6 +3947,11 @@ class _CodexAppServerBackend:
             return final_text
 
         finally:
+            self._unregister_pending_turn_start_waiter(
+                thread_id=thread_id,
+                waiter=turn_start_waiter,
+            )
+            self._untrack_pending_turn_start(thread_key=thread_key)
             if turn_id is not None:
                 await self._untrack_active_turn(
                     thread_key=thread_key,
