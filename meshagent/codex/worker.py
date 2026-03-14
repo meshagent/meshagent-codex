@@ -31,6 +31,7 @@ class _CodexWorkerAdapter(LLMAdapter):
         toolkits,
         output_schema=None,
         event_handler=None,
+        steering_callback=None,
         model=None,
         on_behalf_of=None,
         options: Optional[dict] = None,
@@ -40,6 +41,7 @@ class _CodexWorkerAdapter(LLMAdapter):
         del toolkits
         del output_schema
         del event_handler
+        del steering_callback
         del model
         del on_behalf_of
         raise RuntimeError("CodexWorker routes turns through codex app-server directly")
