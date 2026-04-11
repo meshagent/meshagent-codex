@@ -15,7 +15,7 @@ from meshagent.agents.thread_adapter import ThreadAdapter
 from meshagent.api import MeshDocument, Requirement, RoomException
 from meshagent.api import RemoteParticipant
 from meshagent.api.specs.service import ContainerMountSpec
-from meshagent.tools import Toolkit, make_toolkits
+from meshagent.tools import Toolkit
 
 from .app_server import (
     DEFAULT_CODEX_CONTAINER_MOUNTS,
@@ -919,19 +919,7 @@ class CodexChatBot(ChatBotBase):
             thread_context=thread_context,
             participant=from_participant,
         )
-        thread_tool_providers = self.get_toolkit_builders()
-
         message_toolkits = [*thread_toolkits]
-        message_tools = message.get("tools")
-        if message_tools is not None and len(message_tools) > 0:
-            message_toolkits.extend(
-                await make_toolkits(
-                    room=self.room,
-                    model=model,
-                    providers=thread_tool_providers,
-                    tools=message_tools,
-                )
-            )
 
         await self._open_codex_thread(
             thread_context=thread_context,
