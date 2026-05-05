@@ -650,7 +650,7 @@ async def test_reasoning_delta_keeps_whitespace_when_streaming() -> None:
     }
     messages = _FakeElement(tag_name="messages")
 
-    await adapter.handle_custom_event(
+    await adapter._handle_custom_event_for_messages(
         messages=messages,
         event={
             "type": "codex.event",
@@ -662,7 +662,7 @@ async def test_reasoning_delta_keeps_whitespace_when_streaming() -> None:
             "details": ["hello "],
         },
     )
-    await adapter.handle_custom_event(
+    await adapter._handle_custom_event_for_messages(
         messages=messages,
         event={
             "type": "codex.event",
@@ -875,7 +875,7 @@ async def test_handle_custom_event_persists_preview_and_path_without_raw_data() 
         }
     )
 
-    await adapter.handle_custom_event(
+    await adapter._handle_custom_event_for_messages(
         messages=messages,
         event={
             "type": "agent.event",
@@ -942,8 +942,12 @@ async def test_handle_custom_event_coalesces_repeated_exec_exploration_by_path()
         },
     )
 
-    await adapter.handle_custom_event(messages=messages, event=first_event)
-    await adapter.handle_custom_event(messages=messages, event=second_event)
+    await adapter._handle_custom_event_for_messages(
+        messages=messages, event=first_event
+    )
+    await adapter._handle_custom_event_for_messages(
+        messages=messages, event=second_event
+    )
 
     assert len(messages.children) == 1
     event_element = messages.children[0]

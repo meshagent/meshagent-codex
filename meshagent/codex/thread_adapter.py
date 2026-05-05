@@ -194,7 +194,10 @@ class CodexThreadAdapter(ThreadAdapter):
                 evt = await self._llm_messages.get()
                 event_type = evt.get("type")
                 if event_type in ("agent.event", "codex.event"):
-                    await self.handle_custom_event(messages=doc_messages, event=evt)
+                    await self._handle_custom_event_for_messages(
+                        messages=doc_messages,
+                        event=evt,
+                    )
                     continue
 
                 method = evt.get("method")
@@ -242,7 +245,10 @@ class CodexThreadAdapter(ThreadAdapter):
                         finish_message(text=text)
 
                 else:
-                    await self.handle_custom_event(messages=doc_messages, event=evt)
+                    await self._handle_custom_event_for_messages(
+                        messages=doc_messages,
+                        event=evt,
+                    )
         except asyncio.QueueShutDown:
             pass
         finally:
@@ -387,6 +393,16 @@ class CodexThreadAdapter(ThreadAdapter):
             self._active_reasoning_by_key.pop(key, None)
 
     async def handle_custom_event(
+        self,
+        *,
+        event: dict,
+    ) -> None:
+        await self._handle_custom_event_for_messages(
+            messages=self._messages_element(),
+            event=event,
+        )
+
+    async def _handle_custom_event_for_messages(
         self,
         *,
         messages: Element,
