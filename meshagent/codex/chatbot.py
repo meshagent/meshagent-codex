@@ -36,7 +36,7 @@ class CodexChatBot(ChatBotBase):
     - `chat`
     - `clear`
     - `cancel`
-    - typing/listening signals and per-thread status attributes
+    - typing/listening signals
     """
 
     def __init__(

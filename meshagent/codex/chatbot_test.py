@@ -275,35 +275,17 @@ async def test_clear_thread_status_ignores_stale_nowait_update(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_thread_status_started_at_persists_for_active_turn_and_clears() -> None:
+async def test_thread_status_does_not_publish_participant_attributes() -> None:
     bot = CodexChatBot(name="codex-test")
     local_participant = _FakeLocalParticipant()
     bot._room = _FakeRoom(local_participant=local_participant)  # type: ignore[assignment]
     path = "/threads/test"
 
     await bot.set_thread_status(path=path, status="Thinking", mode="busy")
-    first_started_at = local_participant.get_attribute(
-        bot._thread_status_started_at_attribute_name(path=path)
-    )
-
-    assert isinstance(first_started_at, str)
-    assert first_started_at != ""
-
     await bot.set_thread_status(path=path, status="Searching the web", mode="busy")
-    second_started_at = local_participant.get_attribute(
-        bot._thread_status_started_at_attribute_name(path=path)
-    )
-
-    assert second_started_at == first_started_at
-
     await bot.clear_thread_status(path=path)
 
-    assert (
-        local_participant.get_attribute(
-            bot._thread_status_started_at_attribute_name(path=path)
-        )
-        is None
-    )
+    assert local_participant._attributes == {}
 
 
 @pytest.mark.asyncio
