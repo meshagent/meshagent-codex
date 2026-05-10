@@ -23,7 +23,7 @@ class _CodexWorkerAdapter(LLMAdapter):
     def default_model(self) -> str:
         return self._model
 
-    async def next(
+    async def create_response(
         self,
         *,
         context,

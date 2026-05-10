@@ -192,11 +192,11 @@ class _FakeLLMAdapter(LLMAdapter):
     def default_model(self) -> str:
         return "test-model"
 
-    async def next(
+    async def create_response(
         self,
         *,
         context,
-        room,
+        caller,
         toolkits,
         output_schema=None,
         event_handler=None,
@@ -210,7 +210,7 @@ class _FakeLLMAdapter(LLMAdapter):
         self.calls.append(
             {
                 "context": context,
-                "room": room,
+                "caller": caller,
                 "toolkits": toolkits,
                 "output_schema": output_schema,
                 "model": model,
