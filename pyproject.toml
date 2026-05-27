@@ -13,6 +13,7 @@ dependencies = [
   "meshagent-api==0.42.2",
   "meshagent-agents==0.42.2",
   "meshagent-tools==0.42.2",
+  "openai-codex-cli-bin==0.131.0a4",
   "pytest~=8.4",
   "pytest-asyncio~=0.26",
 ]
@@ -27,6 +28,7 @@ include = ["meshagent.*"]
 
 [tool.setuptools.package-data]
 "meshagent.codex" = ["py.typed", "*.pyi", "**/*.pyi", "**/*.js"]
+"meshagent.codex.vendor.openai_codex" = ["py.typed", "LICENSE"]
 
 [tool.setuptools.dynamic]
 version = {attr = "meshagent.codex.version.__version__"}

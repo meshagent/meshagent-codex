@@ -1,38 +1,27 @@
 # meshagent-codex
 
-`meshagent-codex` adds Codex app-server backed agents:
-- `CodexChatBot`
-- `CodexTaskRunner`
+`meshagent-codex` provides a Meshagent `AgentSupervisor` implementation backed
+by the vendored Codex Python app-server SDK.
 
 ## Included
 
-- `CodexChatBot`: chat agent backed by `codex app-server`
-- `CodexTaskRunner`: task runner backed by `codex app-server`
+- `CodexAgentSupervisor`: creates one `CodexAgentProcess` per Meshagent thread.
+- `CodexAgentProcess`: sends `TurnStart`, `TurnSteer`, and `TurnInterrupt`
+  messages to Codex and emits standard Meshagent `AgentMessage` events.
+- Vendored `openai_codex`: the upstream Codex Python SDK package, including
+  generated app-server models and the async client.
 
 ## Example
 
 ```python
-from meshagent.api.services import ServiceHost
-from meshagent.codex import CodexChatBot
+from meshagent.codex import AppServerConfig, CodexAgentSupervisor
 
-service = ServiceHost()
-
-
-@service.path("/agent")
-class MyCodexAgent(CodexChatBot):
-    def __init__(self):
-        super().__init__(
-            name="meshagent.codex-chatbot",
-            title="codex chatbot",
-            description="chatbot powered by codex app-server",
-            rules=["You are a concise assistant."],
-            model="codex-mini-latest",
-        )
+supervisor = CodexAgentSupervisor(
+    participant=room.local_participant,
+    config=AppServerConfig(cwd="/workspace"),
+    default_model="gpt-5.5",
+)
 ```
 
-By default, the backend launches Codex via `codex app-server`.
-
-You can override transport with environment variables:
-
-- `MESHAGENT_CODEX_COMMAND` to change the launch command.
-- `MESHAGENT_CODEX_WS_URL` to connect to an existing Codex app-server websocket instead of launching a local process.
+The default `AppServerConfig` uses the pinned `openai-codex-cli-bin` runtime
+dependency. Set `AppServerConfig.codex_bin` to launch a specific Codex binary.

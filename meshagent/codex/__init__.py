@@ -1,34 +1,29 @@
 from typing import TYPE_CHECKING, Any
 
-from .app_server import CodexAppServerError
+from .process import CodexAgentProcess
+from .supervisor import DEFAULT_CODEX_MODEL, CodexAgentSupervisor
+from .vendor.openai_codex.client import AppServerConfig
+from .vendor.openai_codex.errors import AppServerError as CodexAppServerError
 from .version import __version__
 
 if TYPE_CHECKING:
-    from .chatbot import CodexChatBot
-    from .task_runner import CodexTaskRunner
-    from .worker import CodexWorker
+    from .vendor.openai_codex.async_client import AsyncAppServerClient
 
 
 def __getattr__(name: str) -> Any:
-    if name == "CodexChatBot":
-        from .chatbot import CodexChatBot
+    if name == "AsyncAppServerClient":
+        from .vendor.openai_codex.async_client import AsyncAppServerClient
 
-        return CodexChatBot
-    if name == "CodexTaskRunner":
-        from .task_runner import CodexTaskRunner
-
-        return CodexTaskRunner
-    if name == "CodexWorker":
-        from .worker import CodexWorker
-
-        return CodexWorker
+        return AsyncAppServerClient
     raise AttributeError(f"module 'meshagent.codex' has no attribute {name!r}")
 
 
 __all__ = [
     "__version__",
+    "AppServerConfig",
+    "AsyncAppServerClient",
+    "CodexAgentProcess",
+    "CodexAgentSupervisor",
     "CodexAppServerError",
-    "CodexChatBot",
-    "CodexTaskRunner",
-    "CodexWorker",
+    "DEFAULT_CODEX_MODEL",
 ]

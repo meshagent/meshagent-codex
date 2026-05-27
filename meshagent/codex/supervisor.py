@@ -1,0 +1,318 @@
+from __future__ import annotations
+
+import logging
+import uuid
+from collections.abc import Callable
+from typing import Protocol
+
+from meshagent.agents.messages import (
+    AGENT_EVENT_MODEL_CHANGED,
+    AGENT_MESSAGE_CAPABILITIES_RESPONSE,
+    AGENT_MESSAGE_MODELS_RESPONSE,
+    AgentMessage,
+    AgentModelChanged,
+    AgentModelInfo,
+    AgentProviderInfo,
+    CapabilitiesRequest,
+    CapabilitiesResponse,
+    ModelsRequest,
+    ModelsResponse,
+    StartThread,
+    ToolkitCapabilities,
+)
+from meshagent.agents.process import (
+    AgentProcess,
+    AgentSupervisor,
+    Message,
+    ThreadIsolationMode,
+)
+from meshagent.agents.thread_status_publisher import AgentMessageThreadStatusPublisher
+from meshagent.agents.thread_storage import ThreadListEntry, ThreadListPage
+from meshagent.api import Participant
+
+from .vendor.openai_codex.async_client import AsyncAppServerClient
+from .vendor.openai_codex.client import AppServerConfig
+from .vendor.openai_codex.generated.v2_all import ModelListResponse, ThreadStartResponse
+
+logger = logging.getLogger("meshagent.codex.supervisor")
+
+DEFAULT_CODEX_MODEL = "gpt-5.5"
+
+
+class CodexClient(Protocol):
+    async def start(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+    async def initialize(self): ...
+
+    async def thread_start(
+        self,
+        params: dict | None = None,
+    ) -> ThreadStartResponse: ...
+
+    async def thread_list(self, params: dict | None = None): ...
+
+    async def thread_archive(self, thread_id: str): ...
+
+    async def thread_set_name(self, thread_id: str, name: str): ...
+
+    async def model_list(self, include_hidden: bool = False) -> ModelListResponse: ...
+
+
+CodexClientFactory = Callable[[AppServerConfig | None], CodexClient]
+
+
+class CodexAgentSupervisor(AgentSupervisor):
+    """AgentSupervisor backed by the vendored Codex async app-server client."""
+
+    def __init__(
+        self,
+        *,
+        participant: Participant,
+        config: AppServerConfig | None = None,
+        client_factory: CodexClientFactory | None = None,
+        default_model: str | None = None,
+        provider_name: str = "codex",
+        provider_friendly_name: str = "Codex",
+        thread_isolation: ThreadIsolationMode = "global",
+    ) -> None:
+        super().__init__(thread_isolation=thread_isolation)
+        self._participant = participant
+        self._config = config
+        self._client_factory = client_factory or AsyncAppServerClient
+        self._client: CodexClient | None = None
+        self._default_model = default_model
+        self._provider_name = provider_name
+        self._provider_friendly_name = provider_friendly_name
+        self._model_infos: list[AgentModelInfo] = []
+
+    @property
+    def client(self) -> CodexClient:
+        if self._client is None:
+            raise RuntimeError("CodexAgentSupervisor has not been started")
+        return self._client
+
+    @property
+    def default_model(self) -> str:
+        if self._default_model is not None and self._default_model.strip() != "":
+            return self._default_model
+        if len(self._model_infos) > 0:
+            return self._model_infos[0].name
+        return DEFAULT_CODEX_MODEL
+
+    @property
+    def provider_name(self) -> str:
+        return self._provider_name
+
+    def provider_info(self, current_model: str | None = None) -> AgentProviderInfo:
+        active_model = current_model or self.default_model
+        models = [
+            model.model_copy(update={"active": model.name == active_model})
+            for model in self._model_infos
+        ]
+        if len(models) == 0:
+            models = [
+                AgentModelInfo(
+                    name=self.default_model,
+                    friendly_name=self.default_model,
+                    modalities=["text"],
+                    active=True,
+                )
+            ]
+        return AgentProviderInfo(
+            name=self._provider_name,
+            friendly_name=self._provider_friendly_name,
+            default_model=self.default_model,
+            models=models,
+        )
+
+    async def on_start(self) -> None:
+        client = self._client_factory(self._config)
+        await client.start()
+        await client.initialize()
+        self._client = client
+        await self._refresh_models()
+
+    async def on_stop(self) -> None:
+        client = self._client
+        self._client = None
+        if client is not None:
+            await client.close()
+
+    async def _refresh_models(self) -> None:
+        try:
+            response = await self.client.model_list(include_hidden=False)
+        except Exception:
+            logger.debug("unable to load Codex model list", exc_info=True)
+            return
+
+        models: list[AgentModelInfo] = []
+        default_model: str | None = None
+        for model in response.data:
+            model_name = model.model.strip() if model.model.strip() != "" else model.id
+            if model.is_default and default_model is None:
+                default_model = model_name
+            models.append(
+                AgentModelInfo(
+                    name=model_name,
+                    friendly_name=model.display_name,
+                    description=model.description,
+                    modalities=["text"],
+                    supports_attachments="image" in (model.input_modalities or []),
+                    accepts=["image"]
+                    if "image" in (model.input_modalities or [])
+                    else [],
+                    active=False,
+                )
+            )
+        self._model_infos = models
+        if self._default_model is None and default_model is not None:
+            self._default_model = default_model
+
+    async def create_thread_id(
+        self,
+        *,
+        start_thread: StartThread,
+        sender: Participant | None,
+    ) -> str:
+        del sender
+        params: dict[str, object] = {
+            "model": start_thread.model or self.default_model,
+        }
+        if start_thread.instructions is not None:
+            params["developerInstructions"] = start_thread.instructions
+        if start_thread.name is not None:
+            params["config"] = {"name": start_thread.name}
+        response = await self.client.thread_start(params)
+        return response.thread.id
+
+    def create_thread_process(self, thread_id: str) -> AgentProcess:
+        from .process import CodexAgentProcess
+
+        def publish(payload: AgentMessage) -> None:
+            self.emit(sender=self._participant, payload=payload)
+
+        return CodexAgentProcess(
+            thread_id=thread_id,
+            participant=self._participant,
+            client=self.client,
+            provider_name=self._provider_name,
+            default_model=self.default_model,
+            provider_info_builder=self.provider_info,
+            working_dir=None if self._config is None else self._config.cwd,
+            thread_status_publisher=AgentMessageThreadStatusPublisher(
+                thread_id=thread_id,
+                publish=publish,
+            ),
+        )
+
+    async def on_models_request(self, message: Message) -> None:
+        request = ModelsRequest.model_validate(message.data.model_dump(mode="python"))
+        self.emit(
+            sender=message.sender,
+            payload=ModelsResponse(
+                type=AGENT_MESSAGE_MODELS_RESPONSE,
+                source_message_id=request.message_id,
+                providers=[self.provider_info()],
+            ),
+        )
+
+    async def on_thread_renamed(
+        self,
+        *,
+        rename_thread,
+        sender: Participant | None,
+    ) -> ThreadListEntry | None:
+        del sender
+        await self.client.thread_set_name(rename_thread.thread_id, rename_thread.name)
+        return None
+
+    async def on_thread_deleted(
+        self,
+        *,
+        delete_thread,
+        sender: Participant | None,
+    ) -> None:
+        del sender
+        await self.client.thread_archive(delete_thread.thread_id)
+
+    async def list_threads(
+        self,
+        *,
+        list_threads,
+        sender: Participant | None,
+    ) -> ThreadListPage:
+        del sender
+        response = await self.client.thread_list(
+            {
+                "limit": list_threads.limit,
+                "cursor": None,
+                "archived": False,
+            }
+        )
+        entries: list[ThreadListEntry] = []
+        for thread in response.data:
+            name = thread.name.strip() if isinstance(thread.name, str) else ""
+            if name == "":
+                name = thread.preview.strip()
+            if name == "":
+                name = thread.id
+            created_at = str(thread.created_at)
+            modified_at = str(thread.updated_at)
+            entries.append(
+                ThreadListEntry(
+                    name=name,
+                    path=thread.id,
+                    created_at=created_at,
+                    modified_at=modified_at,
+                )
+            )
+        return ThreadListPage(
+            threads=entries,
+            total=len(entries),
+            offset=list_threads.offset,
+            limit=list_threads.limit,
+        )
+
+    def _build_capabilities(self) -> list[ToolkitCapabilities]:
+        return []
+
+    async def emit_capabilities_response(
+        self,
+        *,
+        request: CapabilitiesRequest,
+        sender: Participant | None,
+    ) -> None:
+        self.emit(
+            sender=sender,
+            payload=CapabilitiesResponse(
+                type=AGENT_MESSAGE_CAPABILITIES_RESPONSE,
+                thread_id=request.thread_id,
+                source_message_id=request.message_id,
+                version="codex",
+                toolkits=self._build_capabilities(),
+            ),
+        )
+
+    def model_changed(
+        self,
+        *,
+        thread_id: str,
+        source_message_id: str | None = None,
+        model: str | None = None,
+    ) -> AgentModelChanged:
+        return AgentModelChanged(
+            type=AGENT_EVENT_MODEL_CHANGED,
+            thread_id=thread_id,
+            source_message_id=source_message_id,
+            provider=self._provider_name,
+            model=model or self.default_model,
+            output_modalities=["text"],
+            supports_attachments=True,
+            accepts=["image"],
+        )
+
+
+def new_thread_id() -> str:
+    return str(uuid.uuid4())
