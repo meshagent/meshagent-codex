@@ -186,15 +186,21 @@ class CodexAgentProcess(AgentProcess):
         provider_name: str,
         default_model: str,
         provider_info_builder: ProviderInfoBuilder,
+        backend_name: str = "codex",
         thread_status_publisher: ThreadStatusPublisher | None = None,
         working_dir: str | None = None,
         thread_storage: ThreadStorage | None = None,
         ephemeral_codex_thread: bool = False,
     ) -> None:
-        super().__init__(thread_id=thread_id, thread_storage=thread_storage)
+        super().__init__(
+            thread_id=thread_id,
+            thread_storage=thread_storage,
+            backend=backend_name,
+        )
         self._participant = participant
         self._client = client
         self._provider_name = provider_name
+        self._backend_name = backend_name
         self._current_model = default_model
         self._provider_info_builder = provider_info_builder
         self._thread_status_publisher = thread_status_publisher
@@ -934,6 +940,7 @@ class CodexAgentProcess(AgentProcess):
             thread_id=thread_id,
             source_message_id=source_message_id,
             provider=self._provider_name,
+            backend=self._backend_name,
             model=self._current_model,
             output_modalities=["text"],
             supports_attachments=True,
