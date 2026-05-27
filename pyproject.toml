@@ -13,7 +13,6 @@ dependencies = [
   "meshagent-api==0.42.2",
   "meshagent-agents==0.42.2",
   "meshagent-tools==0.42.2",
-  "openai-codex-cli-bin==0.131.0a4",
   "pytest~=8.4",
   "pytest-asyncio~=0.26",
 ]

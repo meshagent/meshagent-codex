@@ -36,7 +36,7 @@ def test_resolve_codex_bin_uses_explicit_config() -> None:
     )
 
 
-def test_resolve_codex_bin_uses_path_before_pinned_runtime() -> None:
+def test_resolve_codex_bin_uses_path_before_bundled_runtime() -> None:
     path_codex = Path("/usr/local/bin/codex")
     assert (
         resolve_codex_bin(
@@ -50,7 +50,7 @@ def test_resolve_codex_bin_uses_path_before_pinned_runtime() -> None:
     )
 
 
-def test_resolve_codex_bin_falls_back_to_pinned_runtime() -> None:
+def test_resolve_codex_bin_falls_back_to_bundled_runtime() -> None:
     bundled_codex = Path("/bundled/codex")
     assert (
         resolve_codex_bin(

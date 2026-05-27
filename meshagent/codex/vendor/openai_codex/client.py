@@ -96,8 +96,8 @@ def _installed_codex_path() -> Path:
         from codex_cli_bin import bundled_codex_path
     except ImportError as exc:
         raise FileNotFoundError(
-            "Unable to locate a Codex runtime. Install codex on PATH, install the "
-            f"published SDK build with its {RUNTIME_PKG_NAME} dependency, or set "
+            "Unable to locate a Codex runtime. Install codex on PATH, install "
+            f"{RUNTIME_PKG_NAME} separately on a supported platform, or set "
             "AppServerConfig.codex_bin explicitly."
         ) from exc
 

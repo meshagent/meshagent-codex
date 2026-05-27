@@ -23,5 +23,7 @@ supervisor = CodexAgentSupervisor(
 )
 ```
 
-The default `AppServerConfig` uses the pinned `openai-codex-cli-bin` runtime
-dependency. Set `AppServerConfig.codex_bin` to launch a specific Codex binary.
+By default, `AppServerConfig` uses `codex` on `PATH`. Set
+`AppServerConfig.codex_bin` to launch a specific Codex binary. If you install
+`openai-codex-cli-bin` separately on a supported platform, it can still be used
+as a fallback runtime.
