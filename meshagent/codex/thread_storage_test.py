@@ -81,8 +81,8 @@ async def test_codex_thread_repository_lists_renames_and_deletes_threads() -> No
     )
 
     page = await repository.list_threads(limit=20, offset=0)
-    renamed = await repository.rename_thread(thread_id="thread-1", name="Renamed")
-    await repository.delete_thread(thread_id="thread-2")
+    renamed = await repository.rename_thread(path="thread-1", name="Renamed")
+    await repository.delete_thread(path="thread-2")
 
     assert [entry.name for entry in page.threads] == ["Named Thread", "Preview Thread"]
     assert renamed is None
@@ -99,3 +99,12 @@ def test_codex_thread_storage_is_non_ephemeral_noop_storage() -> None:
     assert storage.is_ephemeral is False
     assert storage.agent_messages() == []
     assert storage.unflushed_agent_messages() == []
+
+
+def test_codex_thread_repository_does_not_create_thread_storage() -> None:
+    repository = CodexThreadStorageRepository(
+        client=_FakeCodexThreadClient(),
+        default_model=lambda: "gpt-default",
+    )
+
+    assert not hasattr(repository, "create_thread_storage")

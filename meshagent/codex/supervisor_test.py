@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from meshagent.agents.messages import (
@@ -8,6 +10,7 @@ from meshagent.agents.messages import (
     RenameThread,
     StartThread,
 )
+from meshagent.agents.thread_storage import ThreadListEntry
 from meshagent.api import Participant
 
 from .supervisor import CodexAgentSupervisor
@@ -17,13 +20,39 @@ class _FakeDatasetThreadStorage:
     upsert_calls: list[tuple[object, str, str, str]] = []
     rename_calls: list[tuple[object, str, str, str]] = []
 
-    @staticmethod
-    async def upsert_thread(*, room, thread_dir: str, path: str, name: str) -> None:
-        _FakeDatasetThreadStorage.upsert_calls.append((room, thread_dir, path, name))
+    def __init__(
+        self,
+        *,
+        room,
+        path: str | None = None,
+        thread_dir: str | None = None,
+    ) -> None:
+        del path
+        self.room = room
+        self.thread_dir = thread_dir or ""
 
-    @staticmethod
-    async def rename_thread(*, room, thread_dir: str, path: str, name: str) -> None:
-        _FakeDatasetThreadStorage.rename_calls.append((room, thread_dir, path, name))
+    async def upsert_thread(self, *, path: str, name: str) -> ThreadListEntry:
+        _FakeDatasetThreadStorage.upsert_calls.append(
+            (self.room, self.thread_dir, path, name)
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        return ThreadListEntry(
+            name=name,
+            path=path,
+            created_at=now,
+            modified_at=now,
+        )
+
+    async def rename_thread(self, *, path: str, name: str) -> ThreadListEntry:
+        _FakeDatasetThreadStorage.rename_calls.append(
+            (self.room, self.thread_dir, path, name)
+        )
+        return ThreadListEntry(
+            name=name,
+            path=path,
+            created_at="",
+            modified_at=datetime.now(timezone.utc).isoformat(),
+        )
 
 
 @pytest.fixture(autouse=True)

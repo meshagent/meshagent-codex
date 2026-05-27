@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import AsyncIterator, Callable
 from typing import Any, Protocol
 
 from meshagent.agents.context import AgentSessionContext
 from meshagent.agents.messages import StartThread
 from meshagent.agents.thread_storage import (
     ThreadListEntry,
+    ThreadListEvent,
     ThreadListPage,
-    ThreadStorage,
 )
 from meshagent.api import Participant
 from meshagent.tools import Toolkit
@@ -94,15 +95,28 @@ class CodexThreadStorageRepository:
     def __init__(
         self,
         *,
-        client: CodexThreadClient,
+        client: CodexThreadClient | None = None,
+        client_provider: Callable[[], CodexThreadClient] | None = None,
         default_model: Callable[[], str],
     ) -> None:
         self._client = client
+        self._client_provider = client_provider
         self._default_model = default_model
+
+    @property
+    def client(self) -> CodexThreadClient:
+        if self._client is not None:
+            return self._client
+        if self._client_provider is not None:
+            return self._client_provider()
+        raise RuntimeError("Codex thread storage repository has no client")
 
     @property
     def is_ephemeral(self) -> bool:
         return False
+
+    def thread_list_path(self) -> str:
+        return ""
 
     async def create_thread_id(self, *, start_thread: StartThread) -> str:
         params: dict[str, object] = {
@@ -112,33 +126,43 @@ class CodexThreadStorageRepository:
             params["developerInstructions"] = start_thread.instructions
         if start_thread.name is not None:
             params["config"] = {"name": start_thread.name}
-        response = await self._client.thread_start(params)
+        response = await self.client.thread_start(params)
         return response.thread.id
-
-    async def on_thread_started(
-        self,
-        *,
-        thread_id: str,
-        start_thread: StartThread,
-    ) -> ThreadListEntry | None:
-        del thread_id
-        del start_thread
-        return None
 
     async def rename_thread(
         self,
         *,
-        thread_id: str,
+        path: str,
         name: str,
     ) -> ThreadListEntry | None:
-        await self._client.thread_set_name(thread_id, name)
+        await self.client.thread_set_name(path, name)
         return None
 
-    async def delete_thread(self, *, thread_id: str) -> None:
-        await self._client.thread_archive(thread_id)
+    async def delete_thread(
+        self,
+        *,
+        path: str,
+        delete_storage: bool = True,
+    ) -> None:
+        del delete_storage
+        await self.client.thread_archive(path)
+
+    async def upsert_thread(
+        self,
+        *,
+        path: str,
+        name: str | None = None,
+        created_at: str | None = None,
+        modified_at: str | None = None,
+    ) -> ThreadListEntry | None:
+        del path
+        del name
+        del created_at
+        del modified_at
+        return None
 
     async def list_threads(self, *, limit: int, offset: int) -> ThreadListPage:
-        response = await self._client.thread_list(
+        response = await self.client.thread_list(
             {
                 "limit": limit,
                 "cursor": None,
@@ -167,5 +191,12 @@ class CodexThreadStorageRepository:
             limit=limit,
         )
 
-    def create_thread_storage(self, *, thread_id: str) -> ThreadStorage:
-        return CodexThreadStorage(path=thread_id, is_ephemeral=False)
+    async def watch_threads(
+        self,
+        *,
+        poll_interval: float = 1.0,
+    ) -> AsyncIterator[ThreadListEvent]:
+        del poll_interval
+        await asyncio.Event().wait()
+        if False:
+            yield
