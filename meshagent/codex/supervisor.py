@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import posixpath
 import uuid
 from collections.abc import Callable
-from typing import Protocol
+from datetime import datetime, timezone
+from typing import Literal, Protocol
 
 from meshagent.agents.messages import (
     AGENT_EVENT_MODEL_CHANGED,
@@ -27,8 +29,13 @@ from meshagent.agents.process import (
     ThreadIsolationMode,
 )
 from meshagent.agents.thread_status_publisher import AgentMessageThreadStatusPublisher
-from meshagent.agents.thread_storage import ThreadListEntry, ThreadListPage
-from meshagent.api import Participant
+from meshagent.agents.thread_storage import (
+    ThreadListEntry,
+    ThreadListPage,
+    ThreadStorage,
+)
+from meshagent.api import Participant, RoomClient
+from meshagent.api.agent_content import AgentFileContent, AgentTextContent
 
 from .vendor.openai_codex.async_client import AsyncAppServerClient
 from .vendor.openai_codex.client import AppServerConfig
@@ -37,6 +44,7 @@ from .vendor.openai_codex.generated.v2_all import ModelListResponse, ThreadStart
 logger = logging.getLogger("meshagent.codex.supervisor")
 
 DEFAULT_CODEX_MODEL = "gpt-5.5"
+CodexThreadStorageMode = Literal["none", "codex", "dataset"]
 
 
 class CodexClient(Protocol):
@@ -76,9 +84,13 @@ class CodexAgentSupervisor(AgentSupervisor):
         provider_name: str = "codex",
         provider_friendly_name: str = "Codex",
         thread_isolation: ThreadIsolationMode = "global",
+        thread_storage: CodexThreadStorageMode = "codex",
+        thread_dir: str | None = None,
+        room: RoomClient | None = None,
     ) -> None:
         super().__init__(thread_isolation=thread_isolation)
         self._participant = participant
+        self._room = room
         self._config = config
         self._client_factory = client_factory or AsyncAppServerClient
         self._client: CodexClient | None = None
@@ -86,6 +98,8 @@ class CodexAgentSupervisor(AgentSupervisor):
         self._provider_name = provider_name
         self._provider_friendly_name = provider_friendly_name
         self._model_infos: list[AgentModelInfo] = []
+        self._thread_storage = thread_storage
+        self._thread_dir = thread_dir
 
     @property
     def client(self) -> CodexClient:
@@ -177,6 +191,11 @@ class CodexAgentSupervisor(AgentSupervisor):
         sender: Participant | None,
     ) -> str:
         del sender
+        if self._thread_storage == "dataset":
+            return self._new_dataset_thread_id()
+        if self._thread_storage == "none":
+            return self._new_tmp_thread_id()
+
         params: dict[str, object] = {
             "model": start_thread.model or self.default_model,
         }
@@ -201,6 +220,8 @@ class CodexAgentSupervisor(AgentSupervisor):
             default_model=self.default_model,
             provider_info_builder=self.provider_info,
             working_dir=None if self._config is None else self._config.cwd,
+            thread_storage=self._create_thread_storage(thread_id=thread_id),
+            ephemeral_codex_thread=self._thread_storage in ("dataset", "none"),
             thread_status_publisher=AgentMessageThreadStatusPublisher(
                 thread_id=thread_id,
                 publish=publish,
@@ -225,6 +246,24 @@ class CodexAgentSupervisor(AgentSupervisor):
         sender: Participant | None,
     ) -> ThreadListEntry | None:
         del sender
+        if self._thread_storage == "dataset":
+            from meshagent.agents.dataset_thread_storage import DatasetThreadStorage
+
+            await DatasetThreadStorage.rename_thread(
+                room=self._room_or_raise(),
+                thread_dir=self._thread_dir_or_raise(),
+                path=rename_thread.thread_id,
+                name=rename_thread.name,
+            )
+            now = datetime.now(timezone.utc).isoformat()
+            return ThreadListEntry(
+                name=rename_thread.name,
+                path=rename_thread.thread_id,
+                created_at="",
+                modified_at=now,
+            )
+        if self._thread_storage == "none":
+            return None
         await self.client.thread_set_name(rename_thread.thread_id, rename_thread.name)
         return None
 
@@ -235,6 +274,17 @@ class CodexAgentSupervisor(AgentSupervisor):
         sender: Participant | None,
     ) -> None:
         del sender
+        if self._thread_storage == "dataset":
+            from meshagent.agents.dataset_thread_storage import DatasetThreadStorage
+
+            await DatasetThreadStorage.delete_thread(
+                room=self._room_or_raise(),
+                thread_dir=self._thread_dir_or_raise(),
+                path=delete_thread.thread_id,
+            )
+            return
+        if self._thread_storage == "none":
+            return
         await self.client.thread_archive(delete_thread.thread_id)
 
     async def list_threads(
@@ -244,6 +294,22 @@ class CodexAgentSupervisor(AgentSupervisor):
         sender: Participant | None,
     ) -> ThreadListPage:
         del sender
+        if self._thread_storage == "dataset":
+            from meshagent.agents.dataset_thread_storage import DatasetThreadStorage
+
+            return await DatasetThreadStorage.list_threads(
+                room=self._room_or_raise(),
+                thread_dir=self._thread_dir_or_raise(),
+                limit=list_threads.limit,
+                offset=list_threads.offset,
+            )
+        if self._thread_storage == "none":
+            return ThreadListPage(
+                threads=[],
+                total=0,
+                offset=list_threads.offset,
+                limit=list_threads.limit,
+            )
         response = await self.client.thread_list(
             {
                 "limit": list_threads.limit,
@@ -274,6 +340,61 @@ class CodexAgentSupervisor(AgentSupervisor):
             offset=list_threads.offset,
             limit=list_threads.limit,
         )
+
+    async def on_thread_started(
+        self,
+        *,
+        thread_id: str,
+        start_thread: StartThread,
+        sender: Participant | None,
+    ) -> ThreadListEntry | None:
+        del sender
+        if self._thread_storage != "dataset":
+            return None
+        from meshagent.agents.dataset_thread_storage import DatasetThreadStorage
+
+        name = _thread_name_from_start_thread(start_thread)
+        await DatasetThreadStorage.upsert_thread(
+            room=self._room_or_raise(),
+            thread_dir=self._thread_dir_or_raise(),
+            path=thread_id,
+            name=name,
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        return ThreadListEntry(
+            name=name,
+            path=thread_id,
+            created_at=now,
+            modified_at=now,
+        )
+
+    def _create_thread_storage(self, *, thread_id: str) -> ThreadStorage | None:
+        if self._thread_storage != "dataset":
+            return None
+        from meshagent.agents.dataset_thread_storage import DatasetThreadStorage
+
+        return DatasetThreadStorage(room=self._room_or_raise(), path=thread_id)
+
+    def _room_or_raise(self) -> RoomClient:
+        if self._room is None:
+            raise RuntimeError("dataset thread storage requires a room client")
+        return self._room
+
+    def _thread_dir_or_raise(self) -> str:
+        if self._thread_dir is None or self._thread_dir.strip() == "":
+            raise RuntimeError("dataset thread storage requires --thread-dir")
+        return self._thread_dir
+
+    def _new_dataset_thread_id(self) -> str:
+        thread_dir = self._thread_dir_or_raise().strip().rstrip("/")
+        item_id = uuid.uuid4().hex
+        if thread_dir.startswith("dataset://"):
+            return f"{thread_dir}/{item_id}"
+        return f"dataset://{posixpath.join(thread_dir.strip('/'), item_id)}"
+
+    def _new_tmp_thread_id(self) -> str:
+        thread_dir = (self._thread_dir or "/tmp/codex/threads").strip().rstrip("/")
+        return f"tmp://{posixpath.join(thread_dir.strip('/'), uuid.uuid4().hex)}"
 
     def _build_capabilities(self) -> list[ToolkitCapabilities]:
         return []
@@ -312,6 +433,24 @@ class CodexAgentSupervisor(AgentSupervisor):
             supports_attachments=True,
             accepts=["image"],
         )
+
+
+def _thread_name_from_start_thread(start_thread: StartThread) -> str:
+    if start_thread.name is not None and start_thread.name.strip() != "":
+        return start_thread.name.strip()
+
+    text_parts: list[str] = []
+    attachment_count = 0
+    for item in start_thread.content or []:
+        if isinstance(item, AgentTextContent) and item.text.strip() != "":
+            text_parts.extend(item.text.strip().split())
+        elif isinstance(item, AgentFileContent):
+            attachment_count += 1
+    if len(text_parts) > 0:
+        return " ".join(text_parts[:6])
+    if attachment_count > 0:
+        return "Attachment Thread"
+    return "New Chat"
 
 
 def new_thread_id() -> str:

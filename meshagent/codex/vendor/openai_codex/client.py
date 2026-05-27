@@ -31,6 +31,7 @@ from .generated.v2_all import (
     ThreadCompactStartResponse,
     ThreadForkParams as V2ThreadForkParams,
     ThreadForkResponse,
+    ThreadInjectItemsResponse,
     ThreadListParams as V2ThreadListParams,
     ThreadListResponse,
     ThreadReadResponse,
@@ -416,6 +417,17 @@ class AppServerClient:
         payload = {"threadId": thread_id, **_params_dict(params)}
         return self.request(
             "thread/resume", payload, response_model=ThreadResumeResponse
+        )
+
+    def thread_inject_items(
+        self,
+        thread_id: str,
+        items: list,
+    ) -> ThreadInjectItemsResponse:
+        return self.request(
+            "thread/inject_items",
+            {"threadId": thread_id, "items": items},
+            response_model=ThreadInjectItemsResponse,
         )
 
     def thread_list(

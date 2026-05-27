@@ -21,6 +21,7 @@ from .generated.v2_all import (
     ThreadCompactStartResponse,
     ThreadForkParams as V2ThreadForkParams,
     ThreadForkResponse,
+    ThreadInjectItemsResponse,
     ThreadListParams as V2ThreadListParams,
     ThreadListResponse,
     ThreadReadResponse,
@@ -157,6 +158,14 @@ class AsyncAppServerClient:
     ) -> ThreadResumeResponse:
         """Resume a thread using the wrapped sync client."""
         return await self._call_sync(self._sync.thread_resume, thread_id, params)
+
+    async def thread_inject_items(
+        self,
+        thread_id: str,
+        items: list,
+    ) -> ThreadInjectItemsResponse:
+        """Inject raw Responses API items into a thread."""
+        return await self._call_sync(self._sync.thread_inject_items, thread_id, items)
 
     async def thread_list(
         self, params: V2ThreadListParams | JsonObject | None = None

@@ -8,6 +8,8 @@ import pytest
 from meshagent.agents.chat_client import BaseChatClient
 from meshagent.agents.messages import (
     AGENT_EVENT_TEXT_CONTENT_DELTA,
+    AGENT_EVENT_TEXT_CONTENT_ENDED,
+    AGENT_EVENT_TEXT_CONTENT_STARTED,
     AGENT_EVENT_THREAD_LOADED,
     AGENT_EVENT_THREAD_STATUS,
     AGENT_EVENT_TOOL_CALL_ENDED,
@@ -24,13 +26,20 @@ from meshagent.agents.messages import (
     AgentMessage,
     AgentProviderInfo,
     AgentTextContent,
+    AgentTextContentDelta,
+    AgentTextContentEnded,
+    AgentTextContentStarted,
+    AgentToolCallEnded,
+    AgentToolCallStarted,
     OpenThread,
     TurnStart,
+    TurnStartAccepted,
     TurnSteer,
 )
 from meshagent.agents.thread_status_publisher import AgentMessageThreadStatusPublisher
+from meshagent.agents.thread_storage import ThreadStorage
 
-from .process import CodexAgentProcess
+from .process import CodexAgentProcess, _responses_items_from_agent_messages
 from .vendor.openai_codex.generated.v2_all import (
     AgentMessageDeltaNotification,
     AgentMessageThreadItem,
@@ -39,7 +48,9 @@ from .vendor.openai_codex.generated.v2_all import (
     TextUserInput,
     ThreadTokenUsage,
     ThreadTokenUsageUpdatedNotification,
+    Thread,
     ThreadItem,
+    ThreadStartResponse,
     TokenUsageBreakdown,
     Turn,
     TurnCompletedNotification,
@@ -62,6 +73,20 @@ class _FakeCodexClient:
         self.unregistered_turns: list[str] = []
         self.thread_read_response: Any = None
         self.thread_resume_calls: list[tuple[str, dict[str, Any] | None]] = []
+        self.thread_start_calls: list[dict[str, Any] | None] = []
+        self.thread_inject_item_calls: list[tuple[str, list[Any]]] = []
+
+    async def thread_start(
+        self,
+        params: dict[str, Any] | None = None,
+    ) -> ThreadStartResponse:
+        self.thread_start_calls.append(params)
+        return ThreadStartResponse.model_construct(
+            thread=Thread.model_construct(id="codex-thread-1")
+        )
+
+    async def thread_inject_items(self, thread_id: str, items: list[Any]) -> None:
+        self.thread_inject_item_calls.append((thread_id, items))
 
     async def turn_start(
         self,
@@ -135,6 +160,102 @@ class _NoopChatClient(BaseChatClient):
 
     async def _send_agent_message(self, payload: AgentMessage) -> None:
         del payload
+
+
+class _MemoryThreadStorage(ThreadStorage):
+    def __init__(self, *, path: str) -> None:
+        self._path = path
+        self.pushed_messages: list[AgentMessage] = []
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
+
+    async def wait_until_ready(self) -> None:
+        pass
+
+    def unflushed_agent_messages(self):
+        return []
+
+    def agent_messages(self):
+        return list(self.pushed_messages)
+
+    def push_message(self, *, message, sender=None) -> None:
+        del sender
+        self.pushed_messages.append(message)
+
+
+def test_codex_thread_injection_uses_responses_agent_message_adapter() -> None:
+    items = _responses_items_from_agent_messages(
+        [
+            TurnStartAccepted(
+                type=AGENT_EVENT_TURN_START_ACCEPTED,
+                thread_id="dataset://threads/thread-1",
+                turn_id="turn-1",
+                source_message_id="message-1",
+                content=[AgentTextContent(type="text", text="hello")],
+            ),
+            AgentTextContentStarted(
+                type=AGENT_EVENT_TEXT_CONTENT_STARTED,
+                thread_id="dataset://threads/thread-1",
+                turn_id="turn-1",
+                item_id="assistant-text-1",
+            ),
+            AgentTextContentDelta(
+                type=AGENT_EVENT_TEXT_CONTENT_DELTA,
+                thread_id="dataset://threads/thread-1",
+                turn_id="turn-1",
+                item_id="assistant-text-1",
+                text="hi",
+            ),
+            AgentTextContentEnded(
+                type=AGENT_EVENT_TEXT_CONTENT_ENDED,
+                thread_id="dataset://threads/thread-1",
+                turn_id="turn-1",
+                item_id="assistant-text-1",
+            ),
+            AgentToolCallStarted(
+                type=AGENT_EVENT_TOOL_CALL_STARTED,
+                thread_id="dataset://threads/thread-1",
+                turn_id="turn-1",
+                item_id="patch-1",
+                namespace="openai.responses",
+                toolkit="openai",
+                tool="apply_patch",
+                call_id="call-1",
+                arguments={"operation": {"patch": "*** Begin Patch\n*** End Patch"}},
+            ),
+            AgentToolCallEnded(
+                type=AGENT_EVENT_TOOL_CALL_ENDED,
+                thread_id="dataset://threads/thread-1",
+                turn_id="turn-1",
+                item_id="patch-1",
+                namespace="openai.responses",
+                toolkit="openai",
+                tool="apply_patch",
+                call_id="call-1",
+            ),
+        ]
+    )
+
+    assert items[0] == {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "hello"}],
+    }
+    assert items[1] == {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "hi"}],
+    }
+    assert items[2]["type"] == "apply_patch_call"
+    assert items[2]["operation"] == {"patch": "*** Begin Patch\n*** End Patch"}
 
 
 @pytest.mark.asyncio
@@ -344,6 +465,68 @@ async def test_codex_agent_process_emits_agent_messages_and_status() -> None:
         AGENT_EVENT_TURN_ENDED,
     ]
     assert any(message.type == AGENT_EVENT_THREAD_STATUS for message in emitted)
+
+
+@pytest.mark.asyncio
+async def test_codex_agent_process_persists_emitted_thread_messages_to_storage() -> (
+    None
+):
+    client = _FakeCodexClient()
+    storage = _MemoryThreadStorage(path="thread-1")
+    process = CodexAgentProcess(
+        thread_id="thread-1",
+        participant=None,
+        client=client,
+        provider_name="codex",
+        default_model="gpt-5.5",
+        provider_info_builder=_provider_info,
+        thread_storage=storage,
+    )
+
+    await process.on_turn_start(
+        message=type(
+            "Message",
+            (),
+            {
+                "sender": None,
+                "data": TurnStart(
+                    type=AGENT_MESSAGE_TURN_START,
+                    thread_id="thread-1",
+                    content=[AgentTextContent(type="text", text="hello")],
+                    model="gpt-5.5",
+                ),
+            },
+        )()
+    )
+    await client.notifications.put(
+        Notification(
+            method="item/agentMessage/delta",
+            payload=AgentMessageDeltaNotification(
+                delta="hi",
+                itemId="item-1",
+                threadId="thread-1",
+                turnId="codex-turn-1",
+            ),
+        )
+    )
+    await client.notifications.put(
+        Notification(
+            method="turn/completed",
+            payload=TurnCompletedNotification(
+                threadId="thread-1",
+                turn=Turn(id="codex-turn-1", items=[], status=TurnStatus.completed),
+            ),
+        )
+    )
+
+    task = process._active_turn_task
+    assert task is not None
+    await task
+
+    stored_types = [message.type for message in storage.agent_messages()]
+    assert AGENT_EVENT_TURN_START_ACCEPTED in stored_types
+    assert AGENT_EVENT_TEXT_CONTENT_DELTA in stored_types
+    assert AGENT_EVENT_TURN_ENDED in stored_types
 
 
 @pytest.mark.asyncio

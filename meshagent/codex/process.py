@@ -45,6 +45,7 @@ from meshagent.agents.messages import (
     AgentTextContentEnded,
     AgentTextContentStarted,
     AgentThreadEvent,
+    AgentThreadMessage,
     AgentToolCallEnded,
     AgentToolCallStarted,
     AgentContextWindowUsage,
@@ -71,8 +72,10 @@ from meshagent.agents.messages import (
 )
 from meshagent.agents.process import AgentProcess, Message
 from meshagent.agents.thread_status_publisher import ThreadStatusPublisher
+from meshagent.agents.thread_storage import ThreadStorage
 from meshagent.api import Participant
 from meshagent.api.agent_content import AgentFileContent, AgentTextContent
+from meshagent.openai.tools import OpenAIResponsesAdapter
 
 from .vendor.openai_codex.generated.v2_all import (
     AgentMessageDeltaNotification,
@@ -87,6 +90,7 @@ from .vendor.openai_codex.generated.v2_all import (
     TextUserInput,
     ThreadReadResponse,
     ThreadResumeResponse,
+    ThreadStartResponse,
     ThreadTokenUsageUpdatedNotification,
     TokenUsageBreakdown,
     TurnCompletedNotification,
@@ -102,6 +106,17 @@ logger = logging.getLogger("meshagent.codex.process")
 
 
 class CodexTurnClient(Protocol):
+    async def thread_start(
+        self,
+        params: dict[str, Any] | None = None,
+    ) -> ThreadStartResponse: ...
+
+    async def thread_inject_items(
+        self,
+        thread_id: str,
+        items: list,
+    ) -> Any: ...
+
     async def turn_start(
         self,
         thread_id: str,
@@ -173,8 +188,10 @@ class CodexAgentProcess(AgentProcess):
         provider_info_builder: ProviderInfoBuilder,
         thread_status_publisher: ThreadStatusPublisher | None = None,
         working_dir: str | None = None,
+        thread_storage: ThreadStorage | None = None,
+        ephemeral_codex_thread: bool = False,
     ) -> None:
-        super().__init__(thread_id=thread_id)
+        super().__init__(thread_id=thread_id, thread_storage=thread_storage)
         self._participant = participant
         self._client = client
         self._provider_name = provider_name
@@ -185,6 +202,9 @@ class CodexAgentProcess(AgentProcess):
         self._active_turn: _ActiveTurn | None = None
         self._active_turn_task: asyncio.Task[None] | None = None
         self._steer_tasks: set[asyncio.Task[None]] = set()
+        self._ephemeral_codex_thread = ephemeral_codex_thread
+        self._codex_thread_id = None if ephemeral_codex_thread else thread_id
+        self._thread_storage_injected = False
         self._handlers = {
             AGENT_MESSAGE_THREAD_OPEN: self.on_thread_open,
             AGENT_MESSAGE_THREAD_CLOSE: self.on_thread_close,
@@ -195,6 +215,16 @@ class CodexAgentProcess(AgentProcess):
             AGENT_MESSAGE_CAPABILITIES_REQUEST: self.on_capabilities_request,
             AGENT_MESSAGE_MODEL_CHANGE: self.on_model_change,
         }
+
+    def emit(self, *, sender: Participant | None, payload: AgentMessage) -> None:
+        thread_storage = self.thread_storage
+        if (
+            thread_storage is not None
+            and isinstance(payload, AgentThreadMessage)
+            and payload.thread_id == self.thread_id
+        ):
+            thread_storage.push_message(message=payload, sender=sender)
+        super().emit(sender=sender, payload=payload)
 
     @property
     def turn_id(self) -> str | None:
@@ -217,7 +247,7 @@ class CodexAgentProcess(AgentProcess):
         if active_turn is not None:
             with contextlib.suppress(Exception):
                 await self._client.turn_interrupt(
-                    self._thread_id_or_raise(), active_turn.codex_turn_id
+                    self._codex_thread_id_or_raise(), active_turn.codex_turn_id
                 )
         task = self._active_turn_task
         if task is not None:
@@ -234,16 +264,23 @@ class CodexAgentProcess(AgentProcess):
     async def on_thread_open(self, message: Message) -> None:
         request = OpenThread.model_validate(message.data.model_dump(mode="python"))
         if request.load is True:
-            response = await self._client.thread_resume(
-                request.thread_id,
-                params=self._thread_resume_params(),
-            )
-            if response.model.strip() != "":
-                self._current_model = response.model.strip()
-            for stored_message in self._messages_from_thread_read(
-                response=response,
-                since_turn=request.since_turn,
-            ):
+            if self._ephemeral_codex_thread:
+                await self._ensure_codex_thread()
+                stored_messages = await self._messages_from_thread_storage(
+                    since_turn=request.since_turn
+                )
+            else:
+                response = await self._client.thread_resume(
+                    self._codex_thread_id_or_raise(),
+                    params=self._thread_resume_params(),
+                )
+                if response.model.strip() != "":
+                    self._current_model = response.model.strip()
+                stored_messages = self._messages_from_thread_read(
+                    response=response,
+                    since_turn=request.since_turn,
+                )
+            for stored_message in stored_messages:
                 self.emit(sender=message.sender, payload=stored_message)
         self.emit(
             sender=message.sender,
@@ -269,6 +306,7 @@ class CodexAgentProcess(AgentProcess):
         since_turn: str | None,
     ) -> list[AgentMessage]:
         messages: list[AgentMessage] = []
+        thread_id = self._thread_id_or_raise()
         normalized_since_turn = _normalized_non_empty_string(since_turn)
         include = normalized_since_turn is None
         for turn in response.thread.turns:
@@ -287,7 +325,7 @@ class CodexAgentProcess(AgentProcess):
                         TurnStartAccepted(
                             type=AGENT_EVENT_TURN_START_ACCEPTED,
                             message_id=thread_item.id,
-                            thread_id=response.thread.id,
+                            thread_id=thread_id,
                             turn_id=turn.id,
                             source_message_id=thread_item.id,
                             content=content,
@@ -301,7 +339,7 @@ class CodexAgentProcess(AgentProcess):
                         AgentTextContentDelta(
                             type=AGENT_EVENT_TEXT_CONTENT_DELTA,
                             message_id=thread_item.id,
-                            thread_id=response.thread.id,
+                            thread_id=thread_id,
                             turn_id=turn.id,
                             item_id=thread_item.id,
                             provider=self._provider_name,
@@ -319,11 +357,31 @@ class CodexAgentProcess(AgentProcess):
                     messages.append(
                         TurnEnded(
                             type=AGENT_EVENT_TURN_ENDED,
-                            thread_id=response.thread.id,
+                            thread_id=thread_id,
                             turn_id=turn.id,
                         )
                     )
         return messages
+
+    async def _messages_from_thread_storage(
+        self,
+        *,
+        since_turn: str | None,
+    ) -> list[AgentMessage]:
+        thread_storage = self.thread_storage
+        if thread_storage is None:
+            return []
+        await thread_storage.wait_until_ready()
+        messages = thread_storage.agent_messages()
+        normalized_since_turn = _normalized_non_empty_string(since_turn)
+        if normalized_since_turn is None:
+            return messages
+        for index, stored_message in enumerate(messages):
+            if stored_message.message_id == normalized_since_turn:
+                return messages[index:]
+            if stored_message.turn_id == normalized_since_turn:
+                return messages[index:]
+        return []
 
     async def on_thread_close(self, message: Message) -> None:
         del message
@@ -387,8 +445,9 @@ class CodexAgentProcess(AgentProcess):
             self._current_model = turn_start.model.strip()
 
         try:
+            codex_thread_id = await self._ensure_codex_thread()
             response = await self._client.turn_start(
-                turn_start.thread_id,
+                codex_thread_id,
                 _codex_input_items(turn_start.content),
                 params=self._turn_params(turn_start),
             )
@@ -497,7 +556,7 @@ class CodexAgentProcess(AgentProcess):
     ) -> None:
         try:
             await self._client.turn_steer(
-                turn_steer.thread_id,
+                self._codex_thread_id_or_raise(),
                 codex_turn_id,
                 _codex_input_items(turn_steer.content),
             )
@@ -532,7 +591,7 @@ class CodexAgentProcess(AgentProcess):
             ),
         )
         await self._client.turn_interrupt(
-            turn_interrupt.thread_id, turn_interrupt.turn_id
+            self._codex_thread_id_or_raise(), turn_interrupt.turn_id
         )
 
     async def _run_turn_notifications(self, *, active_turn: _ActiveTurn) -> None:
@@ -601,7 +660,7 @@ class CodexAgentProcess(AgentProcess):
             item = payload.item.root
             if item.type == "agentMessage":
                 self._emit_text_started(
-                    thread_id=payload.thread_id,
+                    thread_id=self._thread_id_or_raise(),
                     turn_id=payload.turn_id,
                     item_id=item.id,
                     active_turn=active_turn,
@@ -612,7 +671,7 @@ class CodexAgentProcess(AgentProcess):
             if item.type == "agentMessage":
                 if item.id not in active_turn.text_item_started:
                     self._emit_text_started(
-                        thread_id=payload.thread_id,
+                        thread_id=self._thread_id_or_raise(),
                         turn_id=payload.turn_id,
                         item_id=item.id,
                         active_turn=active_turn,
@@ -622,13 +681,13 @@ class CodexAgentProcess(AgentProcess):
                         payload=AgentMessageDeltaNotification(
                             delta=item.text,
                             itemId=item.id,
-                            threadId=payload.thread_id,
+                            threadId=self._thread_id_or_raise(),
                             turnId=payload.turn_id,
                         ),
                         active_turn=active_turn,
                     )
                 self._emit_text_ended(
-                    thread_id=payload.thread_id,
+                    thread_id=self._thread_id_or_raise(),
                     turn_id=payload.turn_id,
                     item_id=item.id,
                     active_turn=active_turn,
@@ -644,7 +703,7 @@ class CodexAgentProcess(AgentProcess):
                 sender=active_turn.sender,
                 payload=AgentThreadEvent(
                     type=AGENT_EVENT_THREAD_EVENT,
-                    thread_id=payload.thread_id,
+                    thread_id=self._thread_id_or_raise(),
                     provider=self._provider_name,
                     model=self._current_model,
                     event={
@@ -657,9 +716,12 @@ class CodexAgentProcess(AgentProcess):
             )
             return
         if isinstance(payload, ThreadTokenUsageUpdatedNotification):
+            usage = _usage_update_from_codex_token_usage(payload=payload)
             self.emit(
                 sender=active_turn.sender,
-                payload=_usage_update_from_codex_token_usage(payload=payload),
+                payload=usage.model_copy(
+                    update={"thread_id": self._thread_id_or_raise()}
+                ),
             )
             return
         diff_tool = _codex_diff_tool_from_notification(notification=notification)
@@ -679,7 +741,7 @@ class CodexAgentProcess(AgentProcess):
             sender=active_turn.sender,
             payload=AgentToolCallStarted(
                 type=AGENT_EVENT_TOOL_CALL_STARTED,
-                thread_id=tool.thread_id,
+                thread_id=self._thread_id_or_raise(),
                 turn_id=tool.turn_id,
                 item_id=tool.item_id,
                 namespace="codex",
@@ -729,7 +791,7 @@ class CodexAgentProcess(AgentProcess):
             sender=sender,
             payload=AgentToolCallEnded(
                 type=AGENT_EVENT_TOOL_CALL_ENDED,
-                thread_id=thread_id,
+                thread_id=self._thread_id_or_raise(),
                 turn_id=turn_id,
                 item_id=item_id,
                 namespace="codex",
@@ -772,7 +834,7 @@ class CodexAgentProcess(AgentProcess):
     ) -> None:
         active_turn.text_item_delta_seen.add(payload.item_id)
         self._emit_text_started(
-            thread_id=payload.thread_id,
+            thread_id=self._thread_id_or_raise(),
             turn_id=payload.turn_id,
             item_id=payload.item_id,
             active_turn=active_turn,
@@ -781,7 +843,7 @@ class CodexAgentProcess(AgentProcess):
             sender=active_turn.sender,
             payload=AgentTextContentDelta(
                 type=AGENT_EVENT_TEXT_CONTENT_DELTA,
-                thread_id=payload.thread_id,
+                thread_id=self._thread_id_or_raise(),
                 turn_id=payload.turn_id,
                 item_id=payload.item_id,
                 provider=self._provider_name,
@@ -890,10 +952,42 @@ class CodexAgentProcess(AgentProcess):
             params["cwd"] = self._working_dir
         return params
 
+    async def _ensure_codex_thread(self) -> str:
+        if self._codex_thread_id is not None:
+            return self._codex_thread_id
+        params: dict[str, Any] = {"model": self._current_model, "ephemeral": True}
+        if self._working_dir is not None:
+            params["cwd"] = self._working_dir
+        response = await self._client.thread_start(params)
+        self._codex_thread_id = response.thread.id
+        await self._inject_thread_storage()
+        return self._codex_thread_id
+
+    async def _inject_thread_storage(self) -> None:
+        if self._thread_storage_injected:
+            return
+        self._thread_storage_injected = True
+        thread_storage = self.thread_storage
+        if thread_storage is None:
+            return
+        await thread_storage.wait_until_ready()
+        items = _responses_items_from_agent_messages(thread_storage.agent_messages())
+        if len(items) == 0:
+            return
+        await self._client.thread_inject_items(
+            self._codex_thread_id_or_raise(),
+            items,
+        )
+
     def _thread_id_or_raise(self) -> str:
         if self.thread_id is None:
             raise RuntimeError("CodexAgentProcess requires a thread id")
         return self.thread_id
+
+    def _codex_thread_id_or_raise(self) -> str:
+        if self._codex_thread_id is None:
+            raise RuntimeError("CodexAgentProcess requires a Codex thread id")
+        return self._codex_thread_id
 
 
 def _codex_input_items(content: list[Any]) -> list[dict[str, Any]]:
@@ -906,6 +1000,47 @@ def _codex_input_items(content: list[Any]) -> list[dict[str, Any]]:
     if len(items) == 0:
         items.append({"type": "text", "text": ""})
     return items
+
+
+def _responses_items_from_agent_messages(
+    messages: list[AgentMessage],
+) -> list[dict[str, Any]]:
+    response_messages: list[dict[str, Any]] = []
+    reader = OpenAIResponsesAdapter().make_agent_event_reader(
+        emit_message=response_messages.append
+    )
+    for message in messages:
+        reader.consume(message)
+    reader.finalize()
+
+    items: list[dict[str, Any]] = []
+    for message in response_messages:
+        item = _responses_item_from_adapter_message(message)
+        if item is not None:
+            items.append(item)
+    return items
+
+
+def _responses_item_from_adapter_message(
+    message: dict[str, Any],
+) -> dict[str, Any] | None:
+    message_type = message.get("type")
+    if message_type == "conversation.item.create":
+        item = message.get("item")
+        return dict(item) if isinstance(item, dict) else None
+
+    role = message.get("role")
+    if role in {"user", "assistant"}:
+        content = message.get("content")
+        if not isinstance(content, list) or len(content) == 0:
+            return None
+        item = dict(message)
+        item.setdefault("type", "message")
+        return item
+
+    if isinstance(message_type, str) and message_type.strip() != "":
+        return dict(message)
+    return None
 
 
 def _agent_input_content_from_codex_user_input(
