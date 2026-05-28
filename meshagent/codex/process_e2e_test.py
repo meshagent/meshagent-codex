@@ -526,8 +526,7 @@ async def test_codex_live_e2e_run_tui_loaded_thread_followups(
 ) -> None:
     from meshagent.agents.chat_client import ChatThreadSession
     from meshagent.cli import ask as ask_module
-    from meshagent.cli import codex as codex_cli
-    from meshagent.api import Participant
+    from meshagent.cli import process as process_cli
 
     codex_bin = _codex_bin_from_path()
     if codex_bin is None:
@@ -681,17 +680,33 @@ async def test_codex_live_e2e_run_tui_loaded_thread_followups(
         thread_path: str | None,
         ask_runner,
     ) -> list[str]:
-        supervisor = codex_cli._LocalEventCodexSupervisor(
-            participant=Participant(id="codex", attributes={"name": "codex"}),
-            config=AppServerConfig(
-                codex_bin=codex_bin,
-                cwd=working_dir,
-                config_overrides=_config_overrides_from_env(),
-                client_name="meshagent_codex_e2e_tui",
-                client_title="MeshAgent Codex E2E TUI",
-            ),
-            default_model=model,
+        class _LocalParticipant:
+            id = "codex"
+            attributes = {"name": "codex"}
+
+            def get_attribute(self, name: str):
+                return self.attributes.get(name)
+
+            async def set_attribute(self, name: str, value) -> None:
+                self.attributes[name] = value
+
+        class _Room:
+            local_participant = _LocalParticipant()
+
+        agent_cls = process_cli.build_process_agent(
+            model=f"codex/{model}",
+            rule=[],
+            toolkit=[],
+            schema=[],
+            require_table_read=[],
+            require_table_write=[],
+            channels=[],
+            thread_storage="codex",
+            working_dir=working_dir,
         )
+        agent = agent_cls()
+        await agent.start(room=_Room())
+        supervisor = agent._supervisor
         event_queue = supervisor.subscribe_local_events()
         seen: list[str] = []
         original_send = supervisor.send
@@ -701,22 +716,24 @@ async def test_codex_live_e2e_run_tui_loaded_thread_followups(
             original_send(message)
 
         supervisor.send = record_send
-        bot = type("CodexBot", (), {"_supervisor": supervisor})()
 
         async def traced_ask_runner(**kwargs) -> None:
             await ask_runner(**kwargs, trace_seen=seen)
 
         monkeypatch.setattr(ask_module, "_run_ask_tui", traced_ask_runner)
-        await supervisor.start()
         try:
             trace_task = asyncio.create_task(trace_local_events(event_queue, seen))
             try:
                 await asyncio.wait_for(
-                    codex_cli._run_codex_run_tui(
-                        bot=bot,
-                        model=model,
+                    process_cli._run_process_run_tui(
+                        bot=agent,
+                        room=None,
+                        model=f"codex/{model}",
                         thread_path=thread_path,
+                        thread_storage="codex",
                         agent_name="codex",
+                        thread_dir=None,
+                        threading_mode="none",
                         message=None,
                         working_dir=working_dir,
                     ),
@@ -728,7 +745,7 @@ async def test_codex_live_e2e_run_tui_loaded_thread_followups(
                     await trace_task
         finally:
             supervisor.unsubscribe_local_events(event_queue)
-            await supervisor.stop()
+            await agent.stop()
         return seen
 
     async def trace_local_events(
