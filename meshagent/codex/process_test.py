@@ -689,6 +689,8 @@ async def test_codex_agent_process_loads_thread_messages_on_open() -> None:
         AgentTextContent(type="text", text="loaded hello")
     ]
     assert process.messages[1].text == "loaded response"
+    assert process.messages[1].item_id == "agent-item-1"
+    assert process.messages[1].message_id != "agent-item-1"
 
     session = _NoopChatClient()._create_thread_session(thread_path="thread-1")
     for agent_message in process.messages:

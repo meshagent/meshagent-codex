@@ -344,7 +344,6 @@ class CodexAgentProcess(AgentProcess):
                     turn_messages.append(
                         AgentTextContentDelta(
                             type=AGENT_EVENT_TEXT_CONTENT_DELTA,
-                            message_id=thread_item.id,
                             thread_id=thread_id,
                             turn_id=turn.id,
                             item_id=thread_item.id,
