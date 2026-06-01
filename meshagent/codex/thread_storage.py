@@ -38,6 +38,10 @@ class CodexThreadStorage:
         self._is_ephemeral = is_ephemeral
 
     @property
+    def scheme(self) -> str:
+        return "codex"
+
+    @property
     def path(self) -> str:
         return self._path
 
@@ -102,6 +106,10 @@ class CodexThreadStorageRepository:
         self._client = client
         self._client_provider = client_provider
         self._default_model = default_model
+
+    @property
+    def scheme(self) -> str:
+        return "codex"
 
     @property
     def client(self) -> CodexThreadClient:
