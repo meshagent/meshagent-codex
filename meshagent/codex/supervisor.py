@@ -23,6 +23,7 @@ from meshagent.agents.messages import (
 from meshagent.agents.process import (
     AgentProcess,
     AgentSupervisor,
+    CreatedAgentThread,
     ThreadIsolationMode,
 )
 from meshagent.agents.thread_status_publisher import AgentMessageThreadStatusPublisher
@@ -245,23 +246,47 @@ class CodexBackend:
         del sender
         return None
 
-    async def create_thread_id(
+    async def create_thread(
         self,
         *,
         supervisor: AgentSupervisor,
         start_thread: StartThread,
         sender: Participant | None,
-    ) -> str:
+    ) -> CreatedAgentThread:
         del supervisor
         del sender
         if self._thread_storage == "dataset":
-            return self._new_dataset_thread_id()
+            thread_id = self._new_dataset_thread_id()
+            return CreatedAgentThread(
+                thread_id=thread_id,
+                name=self._thread_name_for_start_thread(start_thread=start_thread),
+            )
         if self._thread_storage == "none":
-            return self._new_tmp_thread_id()
-        return await CodexThreadStorageRepository(
-            client_provider=lambda: self.client,
-            default_model=lambda: self.default_model,
-        ).create_thread_id(start_thread=start_thread)
+            thread_id = self._new_tmp_thread_id()
+            return CreatedAgentThread(
+                thread_id=thread_id,
+                name=self._thread_name_for_start_thread(start_thread=start_thread),
+            )
+        params: dict[str, object] = {
+            "model": start_thread.model or self.default_model,
+        }
+        if start_thread.instructions is not None:
+            params["developerInstructions"] = start_thread.instructions
+        if start_thread.name is not None:
+            params["config"] = {"name": start_thread.name}
+        response = await self.client.thread_start(params)
+        thread = response.thread
+        name = thread.name.strip() if isinstance(thread.name, str) else ""
+        if name == "" and isinstance(thread.preview, str):
+            name = thread.preview.strip()
+        if name == "":
+            name = thread.id
+        return CreatedAgentThread(thread_id=thread.id, name=name)
+
+    def _thread_name_for_start_thread(self, *, start_thread: StartThread) -> str:
+        if isinstance(start_thread.name, str) and start_thread.name.strip() != "":
+            return start_thread.name.strip()
+        return "New Chat"
 
     def create_thread_process(
         self,

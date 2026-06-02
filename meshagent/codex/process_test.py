@@ -82,7 +82,11 @@ class _FakeCodexClient:
     ) -> ThreadStartResponse:
         self.thread_start_calls.append(params)
         return ThreadStartResponse.model_construct(
-            thread=Thread.model_construct(id="codex-thread-1")
+            thread=Thread.model_construct(
+                id="codex-thread-1",
+                name=None,
+                preview="Codex Thread",
+            )
         )
 
     async def thread_inject_items(self, thread_id: str, items: list[Any]) -> None:
