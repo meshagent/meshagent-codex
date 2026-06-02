@@ -29,6 +29,7 @@ from meshagent.agents.process import (
 from meshagent.agents.thread_status_publisher import AgentMessageThreadStatusPublisher
 from meshagent.agents.thread_storage import (
     NoopThreadStorageRepository,
+    ThreadListEntry,
     ThreadStorage,
     ThreadStorageRepository,
 )
@@ -253,19 +254,33 @@ class CodexBackend:
         start_thread: StartThread,
         sender: Participant | None,
     ) -> CreatedAgentThread:
-        del supervisor
-        del sender
         if self._thread_storage == "dataset":
             thread_id = self._new_dataset_thread_id()
+            name = self._thread_name_for_start_thread(start_thread=start_thread)
             return CreatedAgentThread(
                 thread_id=thread_id,
-                name=self._thread_name_for_start_thread(start_thread=start_thread),
+                name=name,
+                metadata=lambda: self._publish_thread_metadata(
+                    supervisor=supervisor,
+                    thread_id=thread_id,
+                    name=name,
+                    start_thread=start_thread,
+                    sender=sender,
+                ),
             )
         if self._thread_storage == "none":
             thread_id = self._new_tmp_thread_id()
+            name = self._thread_name_for_start_thread(start_thread=start_thread)
             return CreatedAgentThread(
                 thread_id=thread_id,
-                name=self._thread_name_for_start_thread(start_thread=start_thread),
+                name=name,
+                metadata=lambda: self._publish_thread_metadata(
+                    supervisor=supervisor,
+                    thread_id=thread_id,
+                    name=name,
+                    start_thread=start_thread,
+                    sender=sender,
+                ),
             )
         params: dict[str, object] = {
             "model": start_thread.model or self.default_model,
@@ -281,7 +296,32 @@ class CodexBackend:
             name = thread.preview.strip()
         if name == "":
             name = thread.id
-        return CreatedAgentThread(thread_id=thread.id, name=name)
+        return CreatedAgentThread(
+            thread_id=thread.id,
+            name=name,
+            metadata=lambda: self._publish_thread_metadata(
+                supervisor=supervisor,
+                thread_id=thread.id,
+                name=name,
+                start_thread=start_thread,
+                sender=sender,
+            ),
+        )
+
+    async def _publish_thread_metadata(
+        self,
+        *,
+        supervisor: AgentSupervisor,
+        thread_id: str,
+        name: str,
+        start_thread: StartThread,
+        sender: Participant | None,
+    ) -> ThreadListEntry | None:
+        return await supervisor.on_thread_started(
+            created_thread=CreatedAgentThread(thread_id=thread_id, name=name),
+            start_thread=start_thread,
+            sender=sender,
+        )
 
     def _thread_name_for_start_thread(self, *, start_thread: StartThread) -> str:
         if isinstance(start_thread.name, str) and start_thread.name.strip() != "":

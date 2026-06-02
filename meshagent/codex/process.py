@@ -27,6 +27,7 @@ from meshagent.agents.messages import (
     AGENT_EVENT_TURN_STEERED,
     AGENT_EVENT_TURN_STEER_ACCEPTED,
     AGENT_EVENT_TURN_STEER_REJECTED,
+    AGENT_EVENT_THREAD_UPDATED,
     AGENT_MESSAGE_CAPABILITIES_REQUEST,
     AGENT_MESSAGE_CAPABILITIES_RESPONSE,
     AGENT_MESSAGE_MODEL_CHANGE,
@@ -45,6 +46,7 @@ from meshagent.agents.messages import (
     AgentTextContentEnded,
     AgentTextContentStarted,
     AgentThreadEvent,
+    AgentThreadListEntry,
     AgentThreadMessage,
     AgentToolCallEnded,
     AgentToolCallStarted,
@@ -57,6 +59,7 @@ from meshagent.agents.messages import (
     ModelsResponse,
     OpenThread,
     ThreadLoaded,
+    ThreadUpdated,
     TurnEnded,
     TurnInterrupt,
     TurnInterrupted,
@@ -91,6 +94,7 @@ from .vendor.openai_codex.generated.v2_all import (
     ThreadReadResponse,
     ThreadResumeResponse,
     ThreadStartResponse,
+    ThreadNameUpdatedNotification,
     ThreadTokenUsageUpdatedNotification,
     TokenUsageBreakdown,
     TurnCompletedNotification,
@@ -728,6 +732,24 @@ class CodexAgentProcess(AgentProcess):
                     update={"thread_id": self._thread_id_or_raise()}
                 ),
             )
+            return
+        if isinstance(payload, ThreadNameUpdatedNotification):
+            name = (
+                payload.thread_name.strip()
+                if isinstance(payload.thread_name, str)
+                else ""
+            )
+            if name != "":
+                self.emit(
+                    sender=active_turn.sender,
+                    payload=ThreadUpdated(
+                        type=AGENT_EVENT_THREAD_UPDATED,
+                        thread=AgentThreadListEntry(
+                            path=self._thread_id_or_raise(),
+                            name=name,
+                        ),
+                    ),
+                )
             return
         diff_tool = _codex_diff_tool_from_notification(notification=notification)
         if diff_tool is not None:

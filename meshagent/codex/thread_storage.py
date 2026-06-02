@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from meshagent.agents.context import AgentSessionContext
@@ -144,7 +145,13 @@ class CodexThreadStorageRepository:
         name: str,
     ) -> ThreadListEntry | None:
         await self.client.thread_set_name(path, name)
-        return None
+        now = datetime.now(timezone.utc).isoformat()
+        return ThreadListEntry(
+            path=path,
+            name=name,
+            created_at=now,
+            modified_at=now,
+        )
 
     async def delete_thread(
         self,

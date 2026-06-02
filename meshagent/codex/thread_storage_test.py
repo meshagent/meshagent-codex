@@ -85,7 +85,9 @@ async def test_codex_thread_repository_lists_renames_and_deletes_threads() -> No
     await repository.delete_thread(path="thread-2")
 
     assert [entry.name for entry in page.threads] == ["Named Thread", "Preview Thread"]
-    assert renamed is None
+    assert renamed is not None
+    assert renamed.path == "thread-1"
+    assert renamed.name == "Renamed"
     assert client.renamed_threads == [("thread-1", "Renamed")]
     assert client.archived_thread_ids == ["thread-2"]
 
