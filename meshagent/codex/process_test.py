@@ -399,6 +399,12 @@ async def test_codex_agent_process_emits_agent_messages_and_status() -> None:
     assert "Wrapping up" in status_texts
     assert "Writing file" in status_texts
     assert "Completed" not in status_texts
+    assert not any(
+        message.type == AGENT_EVENT_THREAD_STATUS
+        and message.status is not None
+        and message.turn_id is None
+        for message in emitted
+    )
     usage_updates = [
         message
         for message in process.messages

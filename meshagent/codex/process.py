@@ -943,7 +943,9 @@ class CodexAgentProcess(AgentProcess):
         if turn_id is not None:
             await publisher.set_thread_turn_id(turn_id=turn_id)
         elif status is None:
+            await publisher.set_thread_status(status=None)
             await publisher.set_thread_turn_id(turn_id=None)
+            return
         await publisher.set_thread_status(
             status=status,
             mode="steerable" if status is not None else None,
