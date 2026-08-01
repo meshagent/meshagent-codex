@@ -74,23 +74,16 @@ class CodexThreadStorage:
         del message
         del sender
 
-    def restore_session_context(
+    async def restore_session_context(
         self,
         *,
         context: AgentSessionContext,
         llm_adapter: Any = None,
+        file_reader: Any = None,
     ) -> None:
         del context
         del llm_adapter
-
-    async def restore_session_context_async(
-        self,
-        *,
-        context: AgentSessionContext,
-        llm_adapter: Any = None,
-    ) -> None:
-        del context
-        del llm_adapter
+        del file_reader
 
     def make_toolkit(self) -> Toolkit:
         return Toolkit(name="codex_thread_storage", tools=[])

@@ -195,8 +195,9 @@ class _MemoryThreadStorage(ThreadStorage):
         self.pushed_messages.append(message)
 
 
-def test_codex_thread_injection_uses_responses_agent_message_adapter() -> None:
-    items = _responses_items_from_agent_messages(
+@pytest.mark.asyncio
+async def test_codex_thread_injection_uses_responses_agent_message_adapter() -> None:
+    items = await _responses_items_from_agent_messages(
         [
             TurnStartAccepted(
                 type=AGENT_EVENT_TURN_START_ACCEPTED,

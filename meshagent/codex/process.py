@@ -1001,7 +1001,9 @@ class CodexAgentProcess(AgentProcess):
         if thread_storage is None:
             return
         await thread_storage.wait_until_ready()
-        items = _responses_items_from_agent_messages(thread_storage.agent_messages())
+        items = await _responses_items_from_agent_messages(
+            thread_storage.agent_messages()
+        )
         if len(items) == 0:
             return
         await self._client.thread_inject_items(
@@ -1032,7 +1034,7 @@ def _codex_input_items(content: list[Any]) -> list[dict[str, Any]]:
     return items
 
 
-def _responses_items_from_agent_messages(
+async def _responses_items_from_agent_messages(
     messages: list[AgentMessage],
 ) -> list[dict[str, Any]]:
     response_messages: list[dict[str, Any]] = []
@@ -1041,7 +1043,7 @@ def _responses_items_from_agent_messages(
     )
     for message in messages:
         reader.consume(message)
-    reader.finalize()
+    await reader.finalize()
 
     items: list[dict[str, Any]] = []
     for message in response_messages:
