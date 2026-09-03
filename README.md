@@ -27,3 +27,10 @@ By default, `AppServerConfig` uses `codex` on `PATH`. Set
 `AppServerConfig.codex_bin` to launch a specific Codex binary. If you install
 `openai-codex-cli-bin` separately on a supported platform, it can still be used
 as a fallback runtime.
+
+## MeshAgent Codex distribution
+
+The independently buildable Rust distribution lives in [`distribution/`](distribution/README.md).
+It pins an OpenAI Codex release and maintains an ordered patch series without
+checking the upstream Rust source into this repository. The Python integration
+in this package remains separate from that source overlay.

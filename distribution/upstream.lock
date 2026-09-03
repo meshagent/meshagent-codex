@@ -1,0 +1,7 @@
+schema_version = 1
+repository = "https://github.com/openai/codex.git"
+tag = "rust-v0.152.1"
+commit = "5adb68a49933ae446bf11935662c83dba55a0804"
+source_subdirectory = "codex-rs"
+distribution_version = "0.152.1-meshagent.1"
+patchset = 4

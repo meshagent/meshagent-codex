@@ -1,0 +1,1265 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MeshAgent Codex Build <codex-build@meshagent.com>
+Date: Wed, 2 Sep 2026 14:09:04 -0700
+Subject: [PATCH 2/2] Isolate MeshAgent runtime without renaming Codex commands
+
+---
+ codex-rs/app-server-daemon/README.md          | 63 ++++++++-----------
+ codex-rs/app-server-daemon/src/lib.rs         | 20 +++---
+ codex-rs/app-server-daemon/src/update_loop.rs |  7 ++-
+ .../app-server-transport/src/transport/mod.rs |  8 +--
+ .../src/transport/unix_socket_tests.rs        | 16 ++---
+ codex-rs/cli/src/bin/logs_client.rs           |  4 +-
+ codex-rs/cli/src/cloud_config.rs              |  2 +-
+ codex-rs/cli/src/doctor.rs                    | 13 ++--
+ codex-rs/cli/src/doctor/background.rs         |  2 +-
+ codex-rs/cli/src/doctor/disk.rs               |  7 ++-
+ codex-rs/cli/src/doctor/disk_tests.rs         | 10 +--
+ codex-rs/cli/src/doctor/output/detail.rs      | 11 +++-
+ codex-rs/cli/src/lib.rs                       |  6 +-
+ codex-rs/cli/src/main.rs                      |  2 +-
+ codex-rs/cli/src/mcp_cmd.rs                   |  4 +-
+ codex-rs/cli/src/plugin_cmd.rs                |  2 +-
+ codex-rs/cli/tests/app_server.rs              |  2 +-
+ codex-rs/cli/tests/cloud_auth.rs              |  2 +-
+ codex-rs/cli/tests/cloud_config.rs            |  2 +-
+ codex-rs/cli/tests/debug_clear_memories.rs    |  2 +-
+ codex-rs/cli/tests/debug_models.rs            |  2 +-
+ codex-rs/cli/tests/delete.rs                  |  2 +-
+ .../cli/tests/doctor_enterprise_network.rs    |  4 +-
+ codex-rs/cli/tests/exec_server.rs             |  8 +--
+ codex-rs/cli/tests/execpolicy.rs              |  4 +-
+ codex-rs/cli/tests/features.rs                |  2 +-
+ codex-rs/cli/tests/login.rs                   |  2 +-
+ codex-rs/cli/tests/marketplace_add.rs         |  2 +-
+ codex-rs/cli/tests/marketplace_remove.rs      |  2 +-
+ codex-rs/cli/tests/marketplace_upgrade.rs     |  2 +-
+ codex-rs/cli/tests/mcp_add_remove.rs          |  2 +-
+ codex-rs/cli/tests/mcp_list.rs                |  2 +-
+ codex-rs/cli/tests/plugin_cli.rs              |  2 +-
+ codex-rs/cli/tests/queue.rs                   |  6 +-
+ codex-rs/cli/tests/sandbox_cloud_config.rs    |  2 +-
+ codex-rs/cli/tests/sandbox_network_proxy.rs   |  4 +-
+ codex-rs/cli/tests/update.rs                  |  2 +-
+ codex-rs/test-binary-support/lib.rs           |  8 +--
+ codex-rs/tui/src/lib.rs                       |  5 +-
+ codex-rs/tui/src/render/highlight.rs          |  2 +-
+ codex-rs/tui/src/startup_draft_tests.rs       |  5 +-
+ codex-rs/tui/src/startup_preflight_tests.rs   | 14 ++---
+ codex-rs/tui/tests/suite/focus_palette.rs     |  2 +-
+ codex-rs/tui/tests/suite/resize_reflow.rs     | 20 ++++--
+ codex-rs/utils/home-dir/src/lib.rs            | 48 +++++++-------
+ .../src/bin/setup_main/win.rs                 |  2 +-
+ 46 files changed, 176 insertions(+), 165 deletions(-)
+
+diff --git a/codex-rs/app-server-daemon/README.md b/codex-rs/app-server-daemon/README.md
+index ac512a8..deaad71 100644
+--- a/codex-rs/app-server-daemon/README.md
++++ b/codex-rs/app-server-daemon/README.md
+@@ -33,53 +33,39 @@ running app-server version when applicable.
+ 
+ ## Bootstrap flow
+ 
+-For a new remote machine:
++Install the managed distribution binary, then bootstrap it:
+ 
+ ```sh
+-curl -fsSL https://chatgpt.com/codex/install.sh | sh
+-$HOME/.codex/packages/standalone/current/codex app-server daemon bootstrap --remote-control
++./codex-distribution install-managed
++$HOME/.meshagent/codex/packages/standalone/current/codex app-server daemon bootstrap --remote-control
+ ```
+ 
+ `bootstrap` requires the standalone managed install. It records the daemon
+-settings under `CODEX_HOME/app-server-daemon/`, starts app-server as a
+-pidfile-backed detached process, and launches a detached updater loop.
++settings under `MESHAGENT_CODEX_HOME/codex-app-server-daemon/` and starts
++app-server as a pidfile-backed detached process.
+ 
+ ## Installation and update cases
+ 
+-The daemon assumes Codex is installed through `install.sh` and always launches
+-the standalone managed binary under `CODEX_HOME`.
+-
+-| Situation | What starts | Does this daemon fetch new binaries? | Does a running app-server eventually move to a newer binary on its own? |
+-| --- | --- | --- | --- |
+-| `install.sh` has run, but only `start` is used | `start` uses `CODEX_HOME/packages/standalone/current/codex` | No | No. The managed path is used when starting or restarting, but no updater is installed. |
+-| `install.sh` has run, then `bootstrap` is used | The pidfile backend uses `CODEX_HOME/packages/standalone/current/codex` | Yes. Bootstrap launches a detached updater loop that runs `install.sh` hourly. | Yes, while that updater process is alive and app-server is already running. After a successful fetch, the updater restarts app-server with the refreshed binary and only then replaces its own process image. |
+-| Some other tool updates the managed binary path | The next fresh start or restart uses the updated file at that path | Only if `bootstrap` is active, because the updater still runs `install.sh` on its normal cadence. | Without `bootstrap`, no. With `bootstrap`, the next successful updater pass compares the managed binary contents after `install.sh` runs; if app-server is running and they differ from the updater's current image, it refreshes app-server first and then itself. |
++The daemon always launches
++`MESHAGENT_CODEX_HOME/packages/standalone/current/codex`. The MeshAgent
++distribution does not run OpenAI's standalone installer or updater. Install a
++new managed binary through MeshAgent distribution tooling, then run `restart`
++to move a running app-server to that version.
+ 
+ ### Standalone installs
+ 
+-For installs created by `install.sh`:
++For installs created by the MeshAgent distribution tooling:
+ 
+ - lifecycle commands always use the standalone managed binary path
+ - `bootstrap` is supported
+-- `bootstrap` starts a detached pid-backed updater loop that fetches via
+-  `install.sh`
+-- after a successful refresh, if app-server is running and the managed binary
+-  contents changed, the updater restarts app-server with that binary first and
+-  only then replaces its own process image
+-- the updater loop is not reboot-persistent; it must be started again by
+-  rerunning `bootstrap` after a reboot
++- `bootstrap` starts only the detached pid-backed app-server
++- automatic standalone updates are disabled
+ 
+ ### Out-of-band updates
+ 
+-This daemon does not watch arbitrary executable files for replacement. If some
+-other tool updates the managed binary path:
+-
+-- without `bootstrap`, a currently running app-server remains on the old
+-  executable image until an explicit `restart`
+-- with `bootstrap`, the detached updater loop notices the changed managed
+-  binary on its next successful scheduled pass after running `install.sh`; if
+-  app-server is running, it refreshes app-server first and then refreshes itself
+-  once that replacement starts successfully
++This daemon does not watch the managed executable for replacement. After
++distribution tooling updates that file, a currently running app-server remains
++on the old executable image until an explicit `restart`.
+ 
+ ## Lifecycle semantics
+ 
+@@ -92,22 +78,23 @@ JSON-RPC initialize handshake on the Unix control socket.
+ for future starts. If a managed app-server is already running, they restart it
+ so the new setting takes effect immediately.
+ 
+-Top-level `codex remote-control` bootstraps with `--remote-control` when the
+-updater loop is not running. Otherwise it enables remote control and starts the
+-daemon normally.
++Top-level `codex remote-control` bootstraps with `--remote-control`
++when the managed daemon is not running. Otherwise it enables remote control and
++starts the daemon normally.
+ 
+ `stop` sends a graceful termination request first, then sends a second
+ termination signal after the grace window if the process is still alive.
+ 
+-All mutating lifecycle commands are serialized per `CODEX_HOME`, so a concurrent
+-`start`, `restart`, `enable-remote-control`, `disable-remote-control`, `stop`,
+-or `bootstrap` does not race another in-flight lifecycle operation.
++All mutating lifecycle commands are serialized per `MESHAGENT_CODEX_HOME`, so a
++concurrent `start`, `restart`, `enable-remote-control`,
++`disable-remote-control`, `stop`, or `bootstrap` does not race another in-flight
++lifecycle operation.
+ 
+ ## State
+ 
+-The daemon stores its local state under `CODEX_HOME/app-server-daemon/`:
++The daemon stores its local state under
++`MESHAGENT_CODEX_HOME/codex-app-server-daemon/`:
+ 
+ - `settings.json` for persisted launch settings
+ - `app-server.pid` for the app-server process record
+-- `app-server-updater.pid` for the pid-backed standalone updater loop
+ - `daemon.lock` for daemon-wide lifecycle serialization
+diff --git a/codex-rs/app-server-daemon/src/lib.rs b/codex-rs/app-server-daemon/src/lib.rs
+index c909788..2c03496 100644
+--- a/codex-rs/app-server-daemon/src/lib.rs
++++ b/codex-rs/app-server-daemon/src/lib.rs
+@@ -32,7 +32,7 @@ const PID_FILE_NAME: &str = "app-server.pid";
+ const UPDATE_PID_FILE_NAME: &str = "app-server-updater.pid";
+ const OPERATION_LOCK_FILE_NAME: &str = "daemon.lock";
+ const SETTINGS_FILE_NAME: &str = "settings.json";
+-const STATE_DIR_NAME: &str = "app-server-daemon";
++const STATE_DIR_NAME: &str = "codex-app-server-daemon";
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum LifecycleCommand {
+@@ -261,7 +261,7 @@ struct Daemon {
+ 
+ impl Daemon {
+     fn from_environment() -> Result<Self> {
+-        let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;
++        let codex_home = find_codex_home().context("failed to resolve MESHAGENT_CODEX_HOME")?;
+         let socket_path = app_server_control_socket_path(codex_home.as_path())?
+             .as_path()
+             .to_path_buf();
+@@ -609,14 +609,12 @@ impl Daemon {
+         if updater.is_starting_or_running().await? {
+             updater.stop().await?;
+         }
+-        updater.start().await?;
+-
+         let info = self.wait_until_ready().await?;
+         let managed_codex_version = self.managed_codex_version_best_effort().await;
+         Ok(BootstrapOutput {
+             status: BootstrapStatus::Bootstrapped,
+             backend: BackendKind::Pid,
+-            auto_update_enabled: true,
++            auto_update_enabled: false,
+             remote_control_enabled: settings.remote_control_enabled,
+             managed_codex_path: self.managed_codex_bin.clone(),
+             managed_codex_version,
+@@ -660,8 +658,7 @@ impl Daemon {
+     }
+ 
+     async fn is_bootstrapped(&self, settings: &DaemonSettings) -> Result<bool> {
+-        let updater = backend::pid_update_loop_backend(self.backend_paths(settings));
+-        updater.is_starting_or_running().await
++        Ok(self.running_backend_instance(settings).await?.is_some())
+     }
+ 
+     fn ensure_managed_codex_bin(&self) -> Result<()> {
+@@ -671,11 +668,10 @@ impl Daemon {
+ 
+         let managed_codex_path = self.managed_codex_bin.display();
+         Err(anyhow!(
+-            "managed standalone Codex install not found at {managed_codex_path}\n\n\
+-             This command requires the standalone install managed by the Codex installer, because \
+-             the daemon starts and updates app-server from that fixed path.\n\n\
+-             Install it with:\n  curl -fsSL https://chatgpt.com/codex/install.sh | sh\n\n\
+-             Then rerun the command you just tried."
++            "managed MeshAgent Codex install not found at {managed_codex_path}\n\n\
++             The daemon starts app-server from the fixed MeshAgent distribution path.\n\n\
++             Install it with the MeshAgent Codex distribution helper, then rerun the command you \
++             just tried."
+         ))
+     }
+ 
+diff --git a/codex-rs/app-server-daemon/src/update_loop.rs b/codex-rs/app-server-daemon/src/update_loop.rs
+index 76fd948..f28a341 100644
+--- a/codex-rs/app-server-daemon/src/update_loop.rs
++++ b/codex-rs/app-server-daemon/src/update_loop.rs
+@@ -8,7 +8,6 @@ use std::time::Duration;
+ #[cfg(unix)]
+ use anyhow::Context;
+ use anyhow::Result;
+-#[cfg(not(unix))]
+ use anyhow::bail;
+ #[cfg(unix)]
+ use codex_http_client::ClientRouteClass;
+@@ -55,9 +54,15 @@ const RESTART_RETRY_INTERVAL: Duration = Duration::from_millis(50);
+ const UPDATE_INTERVAL: Duration = Duration::from_secs(60 * 60);
+ #[cfg(unix)]
+ const INSTALL_URL: &str = "https://chatgpt.com/codex/install.sh";
++const AUTOMATIC_UPDATES_ENABLED: bool = false;
+ 
+ #[cfg(unix)]
+ pub(crate) async fn run(http_client_factory: HttpClientFactory) -> Result<()> {
++    if !AUTOMATIC_UPDATES_ENABLED {
++        bail!(
++            "automatic standalone updates are disabled in MeshAgent Codex; install updates through the MeshAgent distribution tooling"
++        );
++    }
+     let mut terminate =
+         signal(SignalKind::terminate()).context("failed to install updater shutdown handler")?;
+     let running_updater_identity = current_updater_identity().await?;
+diff --git a/codex-rs/app-server-transport/src/transport/mod.rs b/codex-rs/app-server-transport/src/transport/mod.rs
+index c8b0e57..5bb2da0 100644
+--- a/codex-rs/app-server-transport/src/transport/mod.rs
++++ b/codex-rs/app-server-transport/src/transport/mod.rs
+@@ -51,9 +51,9 @@ pub use websocket::start_websocket_acceptor;
+ const INTERNAL_ERROR_CODE: i64 = -32603;
+ const OVERLOADED_ERROR_CODE: i64 = -32001;
+ 
+-const APP_SERVER_CONTROL_SOCKET_DIR_NAME: &str = "app-server-control";
+-const APP_SERVER_CONTROL_SOCKET_FILE_NAME: &str = "app-server-control.sock";
+-const APP_SERVER_STARTUP_LOCK_FILE_NAME: &str = "app-server-startup.lock";
++const APP_SERVER_CONTROL_SOCKET_DIR_NAME: &str = "codex-app-server";
++const APP_SERVER_CONTROL_SOCKET_FILE_NAME: &str = "control.sock";
++const APP_SERVER_STARTUP_LOCK_FILE_NAME: &str = "startup.lock";
+ 
+ pub fn app_server_control_socket_path(codex_home: &Path) -> std::io::Result<AbsolutePathBuf> {
+     AbsolutePathBuf::from_absolute_path(
+@@ -123,7 +123,7 @@ impl AppServerTransport {
+                 let codex_home = find_codex_home().map_err(|err| {
+                     AppServerTransportParseError::InvalidUnixSocketPath {
+                         listen_url: listen_url.to_string(),
+-                        message: format!("failed to resolve CODEX_HOME: {err}"),
++                        message: format!("failed to resolve MESHAGENT_CODEX_HOME: {err}"),
+                     }
+                 })?;
+                 app_server_control_socket_path(&codex_home).map_err(|err| {
+diff --git a/codex-rs/app-server-transport/src/transport/unix_socket_tests.rs b/codex-rs/app-server-transport/src/transport/unix_socket_tests.rs
+index ac0b2b0..85cac51 100644
+--- a/codex-rs/app-server-transport/src/transport/unix_socket_tests.rs
++++ b/codex-rs/app-server-transport/src/transport/unix_socket_tests.rs
+@@ -200,21 +200,13 @@ fn default_control_socket_path() -> AbsolutePathBuf {
+ }
+ 
+ fn test_socket_path(temp_dir: &Path) -> AbsolutePathBuf {
+-    AbsolutePathBuf::from_absolute_path(
+-        temp_dir
+-            .join("app-server-control")
+-            .join("app-server-control.sock"),
+-    )
+-    .expect("socket path should resolve")
++    AbsolutePathBuf::from_absolute_path(temp_dir.join("codex-app-server").join("control.sock"))
++        .expect("socket path should resolve")
+ }
+ 
+ fn test_startup_lock_path(temp_dir: &Path) -> AbsolutePathBuf {
+-    AbsolutePathBuf::from_absolute_path(
+-        temp_dir
+-            .join("app-server-control")
+-            .join("app-server-startup.lock"),
+-    )
+-    .expect("startup lock path should resolve")
++    AbsolutePathBuf::from_absolute_path(temp_dir.join("codex-app-server").join("startup.lock"))
++        .expect("startup lock path should resolve")
+ }
+ 
+ async fn connect_to_socket(socket_path: &Path) -> IoResult<UnixStream> {
+diff --git a/codex-rs/cli/src/bin/logs_client.rs b/codex-rs/cli/src/bin/logs_client.rs
+index e6227a7..01637e6 100644
+--- a/codex-rs/cli/src/bin/logs_client.rs
++++ b/codex-rs/cli/src/bin/logs_client.rs
+@@ -17,8 +17,8 @@ use owo_colors::OwoColorize;
+ #[command(name = "codex-state-logs")]
+ #[command(about = "Tail Codex logs from the dedicated logs SQLite DB with simple filters")]
+ struct Args {
+-    /// Path to CODEX_HOME. Defaults to $CODEX_HOME or ~/.meshagent/codex.
+-    #[arg(long, env = "CODEX_HOME")]
++    /// Path to the MeshAgent Codex home. Defaults to $MESHAGENT_CODEX_HOME or ~/.meshagent/codex.
++    #[arg(long, env = "MESHAGENT_CODEX_HOME")]
+     codex_home: Option<PathBuf>,
+ 
+     /// Direct path to the logs SQLite database. Overrides --codex-home.
+diff --git a/codex-rs/cli/src/cloud_config.rs b/codex-rs/cli/src/cloud_config.rs
+index 3ac9047..aed03b4 100644
+--- a/codex-rs/cli/src/cloud_config.rs
++++ b/codex-rs/cli/src/cloud_config.rs
+@@ -19,7 +19,7 @@ pub(crate) async fn load_config(
+     let cli_overrides = config_overrides
+         .parse_overrides()
+         .map_err(anyhow::Error::msg)?;
+-    let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;
++    let codex_home = find_codex_home().context("failed to resolve MESHAGENT_CODEX_HOME")?;
+     let cwd = AbsolutePathBuf::current_dir().context("failed to resolve current directory")?;
+     let bootstrap_config = load_config_toml_with_layer_stack(
+         codex_home.as_path(),
+diff --git a/codex-rs/cli/src/doctor.rs b/codex-rs/cli/src/doctor.rs
+index 5735044..5a0e4c4 100644
+--- a/codex-rs/cli/src/doctor.rs
++++ b/codex-rs/cli/src/doctor.rs
+@@ -1159,7 +1159,10 @@ where
+ 
+ fn config_check(config: &Config) -> DoctorCheck {
+     let mut details = Vec::new();
+-    details.push(format!("CODEX_HOME: {}", config.codex_home.display()));
++    details.push(format!(
++        "MESHAGENT_CODEX_HOME: {}",
++        config.codex_home.display()
++    ));
+     details.push(format!("cwd: {}", config.cwd.display()));
+     details.push(format!(
+         "model: {}",
+@@ -2185,7 +2188,7 @@ fn non_empty_trimmed(value: String) -> Option<String> {
+ 
+ async fn state_check(config: &Config, command: &DoctorCommand) -> DoctorCheck {
+     let mut details = Vec::new();
+-    path_readiness(&mut details, "CODEX_HOME", &config.codex_home);
++    path_readiness(&mut details, "MESHAGENT_CODEX_HOME", &config.codex_home);
+     path_readiness(&mut details, "log dir", &config.log_dir);
+     path_readiness(&mut details, "sqlite home", config.sqlite_config().home());
+     let mut status = CheckStatus::Ok;
+@@ -2561,14 +2564,14 @@ fn fallback_state_check() -> DoctorCheck {
+             "state.paths",
+             "state",
+             CheckStatus::Ok,
+-            "CODEX_HOME was resolved without config",
++            "MESHAGENT_CODEX_HOME was resolved without config",
+         )
+-        .detail(format!("CODEX_HOME: {}", path.display())),
++        .detail(format!("MESHAGENT_CODEX_HOME: {}", path.display())),
+         Err(err) => DoctorCheck::new(
+             "state.paths",
+             "state",
+             CheckStatus::Warning,
+-            "CODEX_HOME could not be resolved",
++            "MESHAGENT_CODEX_HOME could not be resolved",
+         )
+         .detail(err.to_string()),
+     }
+diff --git a/codex-rs/cli/src/doctor/background.rs b/codex-rs/cli/src/doctor/background.rs
+index 3611e28..9e43d5f 100644
+--- a/codex-rs/cli/src/doctor/background.rs
++++ b/codex-rs/cli/src/doctor/background.rs
+@@ -14,7 +14,7 @@ use super::CheckStatus;
+ use super::DoctorCheck;
+ 
+ const MAX_PROBE_ERROR_CHARS: usize = 120;
+-const STATE_DIR_NAME: &str = "app-server-daemon";
++const STATE_DIR_NAME: &str = "codex-app-server-daemon";
+ const SETTINGS_FILE_NAME: &str = "settings.json";
+ const PID_FILE_NAME: &str = "app-server.pid";
+ const UPDATE_PID_FILE_NAME: &str = "app-server-updater.pid";
+diff --git a/codex-rs/cli/src/doctor/disk.rs b/codex-rs/cli/src/doctor/disk.rs
+index 41da4d7..56321b3 100644
+--- a/codex-rs/cli/src/doctor/disk.rs
++++ b/codex-rs/cli/src/doctor/disk.rs
+@@ -16,7 +16,7 @@ pub(super) fn check(config: Option<&Config>, cwd: &Path) -> DoctorCheck {
+     let home = config
+         .map(|config| config.codex_home.as_path().to_path_buf())
+         .or_else(|| find_codex_home().ok().map(Into::into))
+-        .or_else(|| std::env::var_os("CODEX_HOME").map(Into::into));
++        .or_else(|| std::env::var_os("MESHAGENT_CODEX_HOME").map(Into::into));
+ 
+     check_with_paths(home.as_deref(), cwd, available_space)
+ }
+@@ -43,7 +43,10 @@ fn check_with_paths(
+     ));
+     let mut lowest = None;
+ 
+-    for (label, path) in [("CODEX_HOME", home.as_deref()), ("worktree", Some(cwd))] {
++    for (label, path) in [
++        ("MESHAGENT_CODEX_HOME", home.as_deref()),
++        ("worktree", Some(cwd)),
++    ] {
+         let field = format!("{label} available");
+         let available = path
+             .and_then(|path| path.ancestors().find(|ancestor| ancestor.is_dir()))
+diff --git a/codex-rs/cli/src/doctor/disk_tests.rs b/codex-rs/cli/src/doctor/disk_tests.rs
+index fa0a9e2..81ed0cf 100644
+--- a/codex-rs/cli/src/doctor/disk_tests.rs
++++ b/codex-rs/cli/src/doctor/disk_tests.rs
+@@ -16,7 +16,7 @@ use super::check_with_paths;
+ fn disk_capacity_is_reported_without_loaded_configuration() {
+     let check = check(/*config*/ None, Path::new("."));
+ 
+-    for label in ["CODEX_HOME available: ", "worktree available: "] {
++    for label in ["MESHAGENT_CODEX_HOME available: ", "worktree available: "] {
+         assert!(
+             check
+                 .details
+@@ -61,7 +61,7 @@ fn disk_capacity_thresholds_produce_complete_diagnostics() {
+             "sufficient free disk space (6.0 GiB)",
+         ),
+     ] {
+-        let issues = ["CODEX_HOME", "worktree"]
++        let issues = ["MESHAGENT_CODEX_HOME", "worktree"]
+             .into_iter()
+             .filter(|_| status != "ok")
+             .map(|label| {
+@@ -88,7 +88,7 @@ fn disk_capacity_thresholds_produce_complete_diagnostics() {
+                 "details": [
+                     "warning threshold: 5.0 GiB",
+                     "failure threshold: 1.0 GiB",
+-                    format!("CODEX_HOME available: {measured}"),
++                    format!("MESHAGENT_CODEX_HOME available: {measured}"),
+                     format!("worktree available: {measured}"),
+                 ],
+                 "issues": issues,
+@@ -106,7 +106,7 @@ fn disk_measurement_errors_produce_complete_warning_diagnostics() {
+         Err(io::ErrorKind::PermissionDenied.into())
+     });
+ 
+-    let issues = ["CODEX_HOME", "worktree"]
++    let issues = ["MESHAGENT_CODEX_HOME", "worktree"]
+         .into_iter()
+         .map(|label| {
+             json!({
+@@ -130,7 +130,7 @@ fn disk_measurement_errors_produce_complete_warning_diagnostics() {
+             "details": [
+                 "warning threshold: 5.0 GiB",
+                 "failure threshold: 1.0 GiB",
+-                "CODEX_HOME available: unavailable (PermissionDenied)",
++                "MESHAGENT_CODEX_HOME available: unavailable (PermissionDenied)",
+                 "worktree available: unavailable (PermissionDenied)",
+             ],
+             "issues": issues,
+diff --git a/codex-rs/cli/src/doctor/output/detail.rs b/codex-rs/cli/src/doctor/output/detail.rs
+index 0ee5add..df3fa98 100644
+--- a/codex-rs/cli/src/doctor/output/detail.rs
++++ b/codex-rs/cli/src/doctor/output/detail.rs
+@@ -400,7 +400,7 @@ fn config_details(parsed: &[ParsedDetail], options: HumanOutputOptions) -> Vec<H
+         &mut out,
+         parsed,
+         &[
+-            "CODEX_HOME",
++            "MESHAGENT_CODEX_HOME",
+             "cwd",
+             "model",
+             "model provider",
+@@ -422,7 +422,12 @@ fn config_details(parsed: &[ParsedDetail], options: HumanOutputOptions) -> Vec<H
+ 
+ fn state_details(parsed: &[ParsedDetail]) -> Vec<HumanDetail> {
+     let mut out = Vec::new();
+-    push_row_if_present(&mut out, parsed, "CODEX_HOME", "CODEX_HOME");
++    push_row_if_present(
++        &mut out,
++        parsed,
++        "MESHAGENT_CODEX_HOME",
++        "MESHAGENT_CODEX_HOME",
++    );
+     push_row_if_present(&mut out, parsed, "log dir", "log dir");
+     push_row_if_present(&mut out, parsed, "sqlite home", "sqlite home");
+     push_database_row(&mut out, parsed, "state DB");
+@@ -447,7 +452,7 @@ fn state_details(parsed: &[ParsedDetail]) -> Vec<HumanDetail> {
+         &mut out,
+         parsed,
+         &[
+-            "CODEX_HOME",
++            "MESHAGENT_CODEX_HOME",
+             "log dir",
+             "sqlite home",
+             "state DB",
+diff --git a/codex-rs/cli/src/lib.rs b/codex-rs/cli/src/lib.rs
+index c008567..75f553a 100644
+--- a/codex-rs/cli/src/lib.rs
++++ b/codex-rs/cli/src/lib.rs
+@@ -61,7 +61,7 @@ pub struct SeatbeltCommand {
+     )]
+     pub permissions_profile: Option<String>,
+ 
+-    /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.
++    /// Layer $MESHAGENT_CODEX_HOME/<name>.config.toml on top of the base user config.
+     #[arg(long = "profile", short = 'p')]
+     pub config_profile: Option<ProfileV2Name>,
+ 
+@@ -117,7 +117,7 @@ pub struct LandlockCommand {
+     )]
+     pub permissions_profile: Option<String>,
+ 
+-    /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.
++    /// Layer $MESHAGENT_CODEX_HOME/<name>.config.toml on top of the base user config.
+     #[arg(long = "profile", short = 'p')]
+     pub config_profile: Option<ProfileV2Name>,
+ 
+@@ -160,7 +160,7 @@ pub struct WindowsCommand {
+     )]
+     pub permissions_profile: Option<String>,
+ 
+-    /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.
++    /// Layer $MESHAGENT_CODEX_HOME/<name>.config.toml on top of the base user config.
+     #[arg(long = "profile", short = 'p')]
+     pub config_profile: Option<ProfileV2Name>,
+ 
+diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
+index 8eb3fdc..dde0af3 100644
+--- a/codex-rs/cli/src/main.rs
++++ b/codex-rs/cli/src/main.rs
+@@ -461,7 +461,7 @@ type HostSandboxArgs = UnsupportedSandboxArgs;
+ #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+ #[derive(Debug, Parser)]
+ struct UnsupportedSandboxArgs {
+-    /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.
++    /// Layer $MESHAGENT_CODEX_HOME/<name>.config.toml on top of the base user config.
+     #[arg(long = "profile", short = 'p')]
+     pub config_profile: Option<ProfileV2Name>,
+ 
+diff --git a/codex-rs/cli/src/mcp_cmd.rs b/codex-rs/cli/src/mcp_cmd.rs
+index 38a7f32..44b2f1f 100644
+--- a/codex-rs/cli/src/mcp_cmd.rs
++++ b/codex-rs/cli/src/mcp_cmd.rs
+@@ -351,7 +351,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
+ 
+     validate_server_name(&name)?;
+ 
+-    let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;
++    let codex_home = find_codex_home().context("failed to resolve MESHAGENT_CODEX_HOME")?;
+ 
+     let (transport, oauth_client_id, client_registration, oauth_resource) = match transport_args {
+         AddMcpTransportArgs {
+@@ -534,7 +534,7 @@ async fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveAr
+ 
+     validate_server_name(&name)?;
+ 
+-    let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;
++    let codex_home = find_codex_home().context("failed to resolve MESHAGENT_CODEX_HOME")?;
+     let mut servers = load_global_mcp_servers(&codex_home)
+         .await
+         .with_context(|| format!("failed to load MCP servers from {}", codex_home.display()))?;
+diff --git a/codex-rs/cli/src/plugin_cmd.rs b/codex-rs/cli/src/plugin_cmd.rs
+index 73f8a1d..0ff1d3b 100644
+--- a/codex-rs/cli/src/plugin_cmd.rs
++++ b/codex-rs/cli/src/plugin_cmd.rs
+@@ -583,7 +583,7 @@ struct PluginCommandContext {
+ async fn load_plugin_command_context(
+     overrides: Vec<(String, toml::Value)>,
+ ) -> Result<PluginCommandContext> {
+-    let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;
++    let codex_home = find_codex_home().context("failed to resolve MESHAGENT_CODEX_HOME")?;
+     let config = Config::load_with_cli_overrides(overrides)
+         .await
+         .context("failed to load configuration")?;
+diff --git a/codex-rs/cli/tests/app_server.rs b/codex-rs/cli/tests/app_server.rs
+index 4d3c0d4..42d5468 100644
+--- a/codex-rs/cli/tests/app_server.rs
++++ b/codex-rs/cli/tests/app_server.rs
+@@ -9,7 +9,7 @@ use tempfile::TempDir;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/cli/tests/cloud_auth.rs b/codex-rs/cli/tests/cloud_auth.rs
+index 01e7eb8..9150755 100644
+--- a/codex-rs/cli/tests/cloud_auth.rs
++++ b/codex-rs/cli/tests/cloud_auth.rs
+@@ -36,7 +36,7 @@ async fn cloud_list_only_allows_trusted_credential_destinations() -> Result<()>
+         let mut command = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+         command
+             .current_dir(codex_home.path())
+-            .env("CODEX_HOME", codex_home.path())
++            .env("MESHAGENT_CODEX_HOME", codex_home.path())
+             .env_remove("CODEX_ACCESS_TOKEN")
+             .env_remove("OPENAI_API_KEY")
+             .env_remove("CODEX_CLOUD_TASKS_MODE")
+diff --git a/codex-rs/cli/tests/cloud_config.rs b/codex-rs/cli/tests/cloud_config.rs
+index 7007b2d..d3e7d06 100644
+--- a/codex-rs/cli/tests/cloud_config.rs
++++ b/codex-rs/cli/tests/cloud_config.rs
+@@ -126,7 +126,7 @@ impl CloudManagedConfigFixture {
+         command
+             .kill_on_drop(true)
+             .current_dir(self.codex_home.path())
+-            .env("CODEX_HOME", self.codex_home.path())
++            .env("MESHAGENT_CODEX_HOME", self.codex_home.path())
+             .env("NO_PROXY", "127.0.0.1,localhost")
+             .env("no_proxy", "127.0.0.1,localhost")
+             .env_remove("CODEX_ACCESS_TOKEN")
+diff --git a/codex-rs/cli/tests/debug_clear_memories.rs b/codex-rs/cli/tests/debug_clear_memories.rs
+index 4498252..af30a2c 100644
+--- a/codex-rs/cli/tests/debug_clear_memories.rs
++++ b/codex-rs/cli/tests/debug_clear_memories.rs
+@@ -8,7 +8,7 @@ use tempfile::TempDir;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/cli/tests/debug_models.rs b/codex-rs/cli/tests/debug_models.rs
+index f927742..f9b0503 100644
+--- a/codex-rs/cli/tests/debug_models.rs
++++ b/codex-rs/cli/tests/debug_models.rs
+@@ -5,7 +5,7 @@ use tempfile::TempDir;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/cli/tests/delete.rs b/codex-rs/cli/tests/delete.rs
+index 854b87b..a3956f3 100644
+--- a/codex-rs/cli/tests/delete.rs
++++ b/codex-rs/cli/tests/delete.rs
+@@ -4,7 +4,7 @@ use predicates::prelude::*;
+ fn missing_session_fails_before_delete_confirmation() -> anyhow::Result<()> {
+     let codex_home = tempfile::tempdir()?;
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home.path())
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .args(["delete", "123e4567-e89b-12d3-a456-426614174000"]);
+ 
+     cmd.assert()
+diff --git a/codex-rs/cli/tests/doctor_enterprise_network.rs b/codex-rs/cli/tests/doctor_enterprise_network.rs
+index 2d384a0..8aa9c8c 100644
+--- a/codex-rs/cli/tests/doctor_enterprise_network.rs
++++ b/codex-rs/cli/tests/doctor_enterprise_network.rs
+@@ -43,7 +43,7 @@ async fn invalid_custom_ca_falls_back_to_system_roots() -> Result<()> {
+         let mut command = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+         command
+             .args(["doctor", "--json"])
+-            .env("CODEX_HOME", codex_home.path())
++            .env("MESHAGENT_CODEX_HOME", codex_home.path())
+             .env("CODEX_CA_CERTIFICATE", &certificate)
+             .stdin(Stdio::null());
+         if let Some(sandbox) = sandbox {
+@@ -106,7 +106,7 @@ fn doctor_reports_macos_system_proxy_configuration_and_policy() -> Result<()> {
+ fn doctor_report(codex_home: &Path) -> Result<Value> {
+     let output = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+         .args(["doctor", "--json"])
+-        .env("CODEX_HOME", codex_home)
++        .env("MESHAGENT_CODEX_HOME", codex_home)
+         .stdin(Stdio::null())
+         .output()
+         .context("failed to run the doctor")?;
+diff --git a/codex-rs/cli/tests/exec_server.rs b/codex-rs/cli/tests/exec_server.rs
+index b54b315..3783163 100644
+--- a/codex-rs/cli/tests/exec_server.rs
++++ b/codex-rs/cli/tests/exec_server.rs
+@@ -48,7 +48,7 @@ use wiremock::matchers::path;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+@@ -177,7 +177,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{collector_url}/v1/metrics", pr
+     )?;
+     let mut command = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+     command
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .env("CODEX_API_KEY", "test-api-key")
+         .env(
+             codex_exec_server::CODEX_EXEC_SERVER_EXIT_ON_STDIN_CLOSE_ENV_VAR,
+@@ -401,7 +401,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{base_url}/v1/metrics", protoco
+     let subprocess = async move {
+         let mut command = tokio::process::Command::new(codex_bin);
+         command
+-            .env("CODEX_HOME", codex_home)
++            .env("MESHAGENT_CODEX_HOME", codex_home)
+             .env("NO_PROXY", "127.0.0.1,localhost")
+             .env("no_proxy", "127.0.0.1,localhost")
+             .args(["exec-server", "--listen", "stdio"])
+@@ -531,7 +531,7 @@ async fn send_json_line(
+ fn local_exec_server_exits_successfully_on_sigterm() -> Result<()> {
+     let codex_home = TempDir::new()?;
+     let mut child = std::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .args(["exec-server", "--listen", "ws://127.0.0.1:0"])
+         .stdout(Stdio::piped())
+         .spawn()?;
+diff --git a/codex-rs/cli/tests/execpolicy.rs b/codex-rs/cli/tests/execpolicy.rs
+index 30b5999..f9208fd 100644
+--- a/codex-rs/cli/tests/execpolicy.rs
++++ b/codex-rs/cli/tests/execpolicy.rs
+@@ -25,7 +25,7 @@ prefix_rule(
+     )?;
+ 
+     let output = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .args([
+             "execpolicy",
+             "check",
+@@ -82,7 +82,7 @@ prefix_rule(
+     )?;
+ 
+     let output = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .args([
+             "execpolicy",
+             "check",
+diff --git a/codex-rs/cli/tests/features.rs b/codex-rs/cli/tests/features.rs
+index 3aad6fd..51a60d8 100644
+--- a/codex-rs/cli/tests/features.rs
++++ b/codex-rs/cli/tests/features.rs
+@@ -21,7 +21,7 @@ use wiremock::matchers::path;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/cli/tests/login.rs b/codex-rs/cli/tests/login.rs
+index f631057..5bd589d 100644
+--- a/codex-rs/cli/tests/login.rs
++++ b/codex-rs/cli/tests/login.rs
+@@ -29,7 +29,7 @@ use wiremock::matchers::path;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/cli/tests/marketplace_add.rs b/codex-rs/cli/tests/marketplace_add.rs
+index 0439846..955af1e 100644
+--- a/codex-rs/cli/tests/marketplace_add.rs
++++ b/codex-rs/cli/tests/marketplace_add.rs
+@@ -10,7 +10,7 @@ use tempfile::TempDir;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/cli/tests/marketplace_remove.rs b/codex-rs/cli/tests/marketplace_remove.rs
+index dbad3c3..c4a7b53 100644
+--- a/codex-rs/cli/tests/marketplace_remove.rs
++++ b/codex-rs/cli/tests/marketplace_remove.rs
+@@ -11,7 +11,7 @@ use tempfile::TempDir;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/cli/tests/marketplace_upgrade.rs b/codex-rs/cli/tests/marketplace_upgrade.rs
+index a2cf11f..392a89a 100644
+--- a/codex-rs/cli/tests/marketplace_upgrade.rs
++++ b/codex-rs/cli/tests/marketplace_upgrade.rs
+@@ -7,7 +7,7 @@ use tempfile::TempDir;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/cli/tests/mcp_add_remove.rs b/codex-rs/cli/tests/mcp_add_remove.rs
+index ca68faa..de7069d 100644
+--- a/codex-rs/cli/tests/mcp_add_remove.rs
++++ b/codex-rs/cli/tests/mcp_add_remove.rs
+@@ -14,7 +14,7 @@ use wiremock::matchers::path;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/cli/tests/mcp_list.rs b/codex-rs/cli/tests/mcp_list.rs
+index 175ff03..0aa1a3f 100644
+--- a/codex-rs/cli/tests/mcp_list.rs
++++ b/codex-rs/cli/tests/mcp_list.rs
+@@ -30,7 +30,7 @@ use wiremock::matchers::path;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/cli/tests/plugin_cli.rs b/codex-rs/cli/tests/plugin_cli.rs
+index c504ff9..63dddb6 100644
+--- a/codex-rs/cli/tests/plugin_cli.rs
++++ b/codex-rs/cli/tests/plugin_cli.rs
+@@ -23,7 +23,7 @@ fn marketplace_list_row(marketplace_name: &str, root: &Path) -> String {
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     cmd.env("HOME", codex_home);
+     Ok(cmd)
+ }
+diff --git a/codex-rs/cli/tests/queue.rs b/codex-rs/cli/tests/queue.rs
+index 4275ed7..497b224 100644
+--- a/codex-rs/cli/tests/queue.rs
++++ b/codex-rs/cli/tests/queue.rs
+@@ -179,7 +179,7 @@ async fn run_remote_queue_command(response: QueueResponse) -> Result<(Output, Va
+         ]
+     };
+     let output = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .env("CODEX_REMOTE_TOKEN", "test-token")
+         .args(remote_args)
+         .args(["--thread", THREAD_ID, "--message", "do the thing"])
+@@ -214,7 +214,7 @@ async fn queue_rejects_local_daemon_that_does_not_support_queueing() -> Result<(
+     });
+ 
+     let output = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .args(["queue", "--thread", THREAD_ID, "--message", "do the thing"])
+         .output()
+         .await?;
+@@ -248,7 +248,7 @@ async fn queue_rejects_overrides_that_bypass_local_daemon() -> Result<()> {
+     });
+ 
+     let output = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .args([
+             "queue",
+             "-c",
+diff --git a/codex-rs/cli/tests/sandbox_cloud_config.rs b/codex-rs/cli/tests/sandbox_cloud_config.rs
+index 56379d0..f8e7c41 100644
+--- a/codex-rs/cli/tests/sandbox_cloud_config.rs
++++ b/codex-rs/cli/tests/sandbox_cloud_config.rs
+@@ -102,7 +102,7 @@ async fn sandbox_fetches_and_enforces_cloud_managed_permission_profile() -> Resu
+     let chatgpt_base_url_override = format!("chatgpt_base_url=\"{chatgpt_base_url}\"");
+     let output = Command::new(&codex)
+         .current_dir(codex_home.path())
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .env("NO_PROXY", "127.0.0.1,localhost")
+         .env("no_proxy", "127.0.0.1,localhost")
+         .env_remove("CODEX_ACCESS_TOKEN")
+diff --git a/codex-rs/cli/tests/sandbox_network_proxy.rs b/codex-rs/cli/tests/sandbox_network_proxy.rs
+index c029b67..af3eef0 100644
+--- a/codex-rs/cli/tests/sandbox_network_proxy.rs
++++ b/codex-rs/cli/tests/sandbox_network_proxy.rs
+@@ -34,7 +34,7 @@ mode = "full"
+ 
+     let url = format!("http://127.0.0.2:{port}/");
+     let output = std::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .args([
+             "sandbox",
+             "--permission-profile",
+@@ -125,7 +125,7 @@ allow_local_binding = false
+ 
+     let url = format!("http://127.0.0.2:{port}/");
+     let output = std::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .args([
+             "sandbox",
+             "--permission-profile",
+diff --git a/codex-rs/cli/tests/update.rs b/codex-rs/cli/tests/update.rs
+index cf1742c..ec604f2 100644
+--- a/codex-rs/cli/tests/update.rs
++++ b/codex-rs/cli/tests/update.rs
+@@ -5,7 +5,7 @@ use tempfile::TempDir;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+-    cmd.env("CODEX_HOME", codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+diff --git a/codex-rs/test-binary-support/lib.rs b/codex-rs/test-binary-support/lib.rs
+index 4adefbc..d8ec4c7 100644
+--- a/codex-rs/test-binary-support/lib.rs
++++ b/codex-rs/test-binary-support/lib.rs
+@@ -48,10 +48,10 @@ where
+                 Ok(codex_home) => codex_home,
+                 Err(error) => panic!("failed to create test CODEX_HOME: {error}"),
+             };
+-            let previous_codex_home = std::env::var_os("CODEX_HOME");
++            let previous_codex_home = std::env::var_os("MESHAGENT_CODEX_HOME");
+             // Safety: this runs from a test ctor before test threads begin.
+             unsafe {
+-                std::env::set_var("CODEX_HOME", codex_home.path());
++                std::env::set_var("MESHAGENT_CODEX_HOME", codex_home.path());
+             }
+ 
+             let arg0 = match arg0_dispatch() {
+@@ -60,10 +60,10 @@ where
+             };
+             match previous_codex_home.as_ref() {
+                 Some(value) => unsafe {
+-                    std::env::set_var("CODEX_HOME", value);
++                    std::env::set_var("MESHAGENT_CODEX_HOME", value);
+                 },
+                 None => unsafe {
+-                    std::env::remove_var("CODEX_HOME");
++                    std::env::remove_var("MESHAGENT_CODEX_HOME");
+                 },
+             }
+ 
+diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
+index 5cbf403..7c3217b 100644
+--- a/codex-rs/tui/src/lib.rs
++++ b/codex-rs/tui/src/lib.rs
+@@ -380,7 +380,8 @@ fn websocket_url_supports_auth_token(parsed: &Url) -> bool {
+ pub fn resolve_remote_addr(addr: &str) -> color_eyre::Result<RemoteAppServerEndpoint> {
+     if let Some(socket_path) = addr.strip_prefix("unix://") {
+         let socket_path = if socket_path.is_empty() {
+-            let codex_home = find_codex_home().wrap_err("failed to resolve CODEX_HOME")?;
++            let codex_home =
++                find_codex_home().wrap_err("failed to resolve MESHAGENT_CODEX_HOME")?;
+             codex_app_server_client::app_server_control_socket_path(&codex_home)
+                 .map_err(color_eyre::Report::new)?
+         } else {
+@@ -2496,7 +2497,7 @@ mod tests {
+ 
+     #[test]
+     fn resolve_remote_addr_accepts_default_socket() -> color_eyre::Result<()> {
+-        let codex_home = find_codex_home().wrap_err("failed to resolve CODEX_HOME")?;
++        let codex_home = find_codex_home().wrap_err("failed to resolve MESHAGENT_CODEX_HOME")?;
+         assert_eq!(
+             resolve_remote_addr("unix://")?,
+             RemoteAppServerEndpoint::UnixSocket {
+diff --git a/codex-rs/tui/src/render/highlight.rs b/codex-rs/tui/src/render/highlight.rs
+index e37867c..82af3a2 100644
+--- a/codex-rs/tui/src/render/highlight.rs
++++ b/codex-rs/tui/src/render/highlight.rs
+@@ -116,7 +116,7 @@ pub(crate) fn validate_theme_name(name: Option<&str>, codex_home: Option<&Path>)
+     let name = name?;
+     let custom_theme_path_display = codex_home
+         .map(|home| custom_theme_path(name, home).display().to_string())
+-        .unwrap_or_else(|| format!("$CODEX_HOME/themes/{name}.tmTheme"));
++        .unwrap_or_else(|| format!("$MESHAGENT_CODEX_HOME/themes/{name}.tmTheme"));
+     // Bundled themes always resolve.
+     if parse_theme_name(name).is_some() {
+         return None;
+diff --git a/codex-rs/tui/src/startup_draft_tests.rs b/codex-rs/tui/src/startup_draft_tests.rs
+index 4e2689d..177a31a 100644
+--- a/codex-rs/tui/src/startup_draft_tests.rs
++++ b/codex-rs/tui/src/startup_draft_tests.rs
+@@ -655,7 +655,10 @@ async fn startup_draft_waits_for_onboarding_before_accepting_input() {
+                 codex_home.path(),
+                 Ok(system_config_path),
+                 || Ok(false),
+-                |name| (name == "CODEX_HOME").then(|| codex_home.path().as_os_str().to_os_string()),
++                |name| {
++                    (name == "MESHAGENT_CODEX_HOME")
++                        .then(|| codex_home.path().as_os_str().to_os_string())
++                },
+             )
+         {
+             StartupDraftInitialScreen::Onboarding
+diff --git a/codex-rs/tui/src/startup_preflight_tests.rs b/codex-rs/tui/src/startup_preflight_tests.rs
+index 726277c..0c7f731 100644
+--- a/codex-rs/tui/src/startup_preflight_tests.rs
++++ b/codex-rs/tui/src/startup_preflight_tests.rs
+@@ -48,7 +48,7 @@ fn startup_delays_composer_for_homes_without_authentication_state() -> std::io::
+         &codex_home,
+         Ok(system_config_path.clone()),
+         || Ok(false),
+-        |name| (name == "CODEX_HOME").then(|| "/custom/home".into()),
++        |name| (name == "MESHAGENT_CODEX_HOME").then(|| "/custom/home".into()),
+     ));
+     assert!(!should_delay_startup_composer_for_first_login(
+         &codex_home,
+@@ -86,14 +86,14 @@ fn startup_delays_composer_for_homes_without_authentication_state() -> std::io::
+         &codex_home,
+         Ok(system_config_path.clone()),
+         || Ok(false),
+-        |name| (name == "CODEX_HOME").then(|| "/custom/home".into()),
++        |name| (name == "MESHAGENT_CODEX_HOME").then(|| "/custom/home".into()),
+     ));
+     assert!(!should_delay_startup_composer_for_first_login(
+         &codex_home,
+         Ok(system_config_path.clone()),
+         || panic!("process credentials should not probe managed configuration"),
+         |name| match name {
+-            "CODEX_HOME" => Some("/custom/home".into()),
++            "MESHAGENT_CODEX_HOME" => Some("/custom/home".into()),
+             codex_login::CODEX_ACCESS_TOKEN_ENV_VAR => Some("access-token".into()),
+             _ => None,
+         },
+@@ -111,7 +111,7 @@ fn startup_delays_composer_for_homes_without_authentication_state() -> std::io::
+         std::fs::remove_file(state_path)?;
+     }
+ 
+-    let daemon_directory = codex_home.join("app-server-control");
++    let daemon_directory = codex_home.join("codex-app-server");
+     std::fs::create_dir(&daemon_directory)?;
+     assert!(should_delay_startup_composer_for_first_login(
+         &codex_home,
+@@ -119,14 +119,14 @@ fn startup_delays_composer_for_homes_without_authentication_state() -> std::io::
+         || Ok(false),
+         |_| None,
+     ));
+-    std::fs::write(daemon_directory.join("app-server-control.sock"), "")?;
++    std::fs::write(daemon_directory.join("control.sock"), "")?;
+     assert!(!should_delay_startup_composer_for_first_login(
+         &codex_home,
+         Ok(system_config_path.clone()),
+         || panic!("daemon-owned homes should not probe managed configuration"),
+         |_| None,
+     ));
+-    std::fs::remove_file(daemon_directory.join("app-server-control.sock"))?;
++    std::fs::remove_file(daemon_directory.join("control.sock"))?;
+     std::fs::remove_dir(daemon_directory)?;
+ 
+     let additional_temporary_state = codex_home.join("tmp").join("other");
+@@ -168,7 +168,7 @@ fn startup_keeps_composer_when_home_state_cannot_be_confirmed() -> std::io::Resu
+     {
+         let system_config_path =
+             AbsolutePathBuf::from_absolute_path(temporary_directory.path().join("system.toml"))?;
+-        let daemon_directory = codex_home.join("app-server-control");
++        let daemon_directory = codex_home.join("codex-app-server");
+         std::fs::write(&daemon_directory, "not a directory")?;
+         assert!(!should_delay_startup_composer_for_first_login(
+             &codex_home,
+diff --git a/codex-rs/tui/tests/suite/focus_palette.rs b/codex-rs/tui/tests/suite/focus_palette.rs
+index 309f4eb..a2669d9 100644
+--- a/codex-rs/tui/tests/suite/focus_palette.rs
++++ b/codex-rs/tui/tests/suite/focus_palette.rs
+@@ -99,7 +99,7 @@ impl PtyCodex {
+             .arg("analytics.enabled=false")
+             .env("TERM", "xterm-256color")
+             .env("OPENAI_API_KEY", "focus-palette-test")
+-            .env("CODEX_HOME", codex_home.path())
++            .env("MESHAGENT_CODEX_HOME", codex_home.path())
+             .stdin(stdin)
+             .stdout(stdout)
+             .stderr(slave)
+diff --git a/codex-rs/tui/tests/suite/resize_reflow.rs b/codex-rs/tui/tests/suite/resize_reflow.rs
+index 89928de..de9354a 100644
+--- a/codex-rs/tui/tests/suite/resize_reflow.rs
++++ b/codex-rs/tui/tests/suite/resize_reflow.rs
+@@ -55,7 +55,10 @@ async fn tmux_split_preserves_fresh_session_composer_row_after_resize_reflow() -
+             .arg(&session_name)
+             .arg("--")
+             .arg("env")
+-            .arg(format!("CODEX_HOME={}", codex_home.path().display()))
++            .arg(format!(
++                "MESHAGENT_CODEX_HOME={}",
++                codex_home.path().display()
++            ))
+             .arg("OPENAI_API_KEY=dummy")
+             .arg(codex)
+             .arg("-c")
+@@ -222,7 +225,10 @@ async fn tmux_width_resize_restore_keeps_visible_content_anchored() -> Result<()
+             .arg(&session_name)
+             .arg("--")
+             .arg("env")
+-            .arg(format!("CODEX_HOME={}", codex_home.path().display()))
++            .arg(format!(
++                "MESHAGENT_CODEX_HOME={}",
++                codex_home.path().display()
++            ))
+             .arg("OPENAI_API_KEY=dummy")
+             .arg(codex)
+             .arg("-c")
+@@ -351,7 +357,10 @@ async fn tmux_scrolled_composer_resize_preserves_visible_draft_text() -> Result<
+             .arg(&session_name)
+             .arg("--")
+             .arg("env")
+-            .arg(format!("CODEX_HOME={}", codex_home.path().display()))
++            .arg(format!(
++                "MESHAGENT_CODEX_HOME={}",
++                codex_home.path().display()
++            ))
+             .arg("OPENAI_API_KEY=dummy")
+             .arg(codex)
+             .arg("--model")
+@@ -479,7 +488,10 @@ async fn run_repeated_resize_smoke() -> Result<()> {
+             .arg(&session_name)
+             .arg("--")
+             .arg("env")
+-            .arg(format!("CODEX_HOME={}", codex_home.path().display()))
++            .arg(format!(
++                "MESHAGENT_CODEX_HOME={}",
++                codex_home.path().display()
++            ))
+             .arg("OPENAI_API_KEY=dummy")
+             .arg(codex)
+             .arg("-c")
+diff --git a/codex-rs/utils/home-dir/src/lib.rs b/codex-rs/utils/home-dir/src/lib.rs
+index dfc7498..1d9e7dd 100644
+--- a/codex-rs/utils/home-dir/src/lib.rs
++++ b/codex-rs/utils/home-dir/src/lib.rs
+@@ -3,47 +3,49 @@ use dirs::home_dir;
+ use std::path::PathBuf;
+ 
+ /// Returns the path to the Codex configuration directory, which can be
+-/// specified by the `CODEX_HOME` environment variable. If not set, defaults to
+-/// `~/.meshagent/codex`.
++/// specified by the `MESHAGENT_CODEX_HOME` environment variable. If not set,
++/// defaults to `~/.meshagent/codex`.
+ ///
+-/// - If `CODEX_HOME` is set, the value must exist and be a directory. The
+-///   value will be canonicalized and this function will Err otherwise.
+-/// - If `CODEX_HOME` is not set, this function does not verify that the
+-///   directory exists.
++/// - If `MESHAGENT_CODEX_HOME` is set, the value must exist and be a directory.
++///   The value will be canonicalized and this function will Err otherwise.
++/// - If `MESHAGENT_CODEX_HOME` is not set, this function does not verify that
++///   the directory exists.
+ pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {
+-    let codex_home_env = std::env::var("CODEX_HOME")
++    let meshagent_codex_home_env = std::env::var("MESHAGENT_CODEX_HOME")
+         .ok()
+         .filter(|val| !val.is_empty());
+-    find_codex_home_from_env(codex_home_env.as_deref())
++    find_codex_home_from_env(meshagent_codex_home_env.as_deref())
+ }
+ 
+-fn find_codex_home_from_env(codex_home_env: Option<&str>) -> std::io::Result<AbsolutePathBuf> {
+-    // Honor the `CODEX_HOME` environment variable when it is set to allow users
+-    // (and tests) to override the default location.
+-    match codex_home_env {
++fn find_codex_home_from_env(
++    meshagent_codex_home_env: Option<&str>,
++) -> std::io::Result<AbsolutePathBuf> {
++    match meshagent_codex_home_env {
+         Some(val) => {
+             let path = PathBuf::from(val);
+             let metadata = std::fs::metadata(&path).map_err(|err| match err.kind() {
+                 std::io::ErrorKind::NotFound => std::io::Error::new(
+                     std::io::ErrorKind::NotFound,
+-                    format!("CODEX_HOME points to {val:?}, but that path does not exist"),
++                    format!("MESHAGENT_CODEX_HOME points to {val:?}, but that path does not exist"),
+                 ),
+                 _ => std::io::Error::new(
+                     err.kind(),
+-                    format!("failed to read CODEX_HOME {val:?}: {err}"),
++                    format!("failed to read MESHAGENT_CODEX_HOME {val:?}: {err}"),
+                 ),
+             })?;
+ 
+             if !metadata.is_dir() {
+                 Err(std::io::Error::new(
+                     std::io::ErrorKind::InvalidInput,
+-                    format!("CODEX_HOME points to {val:?}, but that path is not a directory"),
++                    format!(
++                        "MESHAGENT_CODEX_HOME points to {val:?}, but that path is not a directory"
++                    ),
+                 ))
+             } else {
+                 let canonical = path.canonicalize().map_err(|err| {
+                     std::io::Error::new(
+                         err.kind(),
+-                        format!("failed to canonicalize CODEX_HOME {val:?}: {err}"),
++                        format!("failed to canonicalize MESHAGENT_CODEX_HOME {val:?}: {err}"),
+                     )
+                 })?;
+                 AbsolutePathBuf::from_absolute_path(canonical)
+@@ -81,10 +83,11 @@ mod tests {
+             .to_str()
+             .expect("missing codex home path should be valid utf-8");
+ 
+-        let err = find_codex_home_from_env(Some(missing_str)).expect_err("missing CODEX_HOME");
++        let err =
++            find_codex_home_from_env(Some(missing_str)).expect_err("missing MESHAGENT_CODEX_HOME");
+         assert_eq!(err.kind(), ErrorKind::NotFound);
+         assert!(
+-            err.to_string().contains("CODEX_HOME"),
++            err.to_string().contains("MESHAGENT_CODEX_HOME"),
+             "unexpected error: {err}"
+         );
+     }
+@@ -98,7 +101,7 @@ mod tests {
+             .to_str()
+             .expect("file codex home path should be valid utf-8");
+ 
+-        let err = find_codex_home_from_env(Some(file_str)).expect_err("file CODEX_HOME");
++        let err = find_codex_home_from_env(Some(file_str)).expect_err("file MESHAGENT_CODEX_HOME");
+         assert_eq!(err.kind(), ErrorKind::InvalidInput);
+         assert!(
+             err.to_string().contains("not a directory"),
+@@ -114,7 +117,8 @@ mod tests {
+             .to_str()
+             .expect("temp codex home path should be valid utf-8");
+ 
+-        let resolved = find_codex_home_from_env(Some(temp_str)).expect("valid CODEX_HOME");
++        let resolved =
++            find_codex_home_from_env(Some(temp_str)).expect("valid MESHAGENT_CODEX_HOME");
+         let expected = temp_home
+             .path()
+             .canonicalize()
+@@ -125,8 +129,8 @@ mod tests {
+ 
+     #[test]
+     fn find_codex_home_without_env_uses_default_home_dir() {
+-        let resolved =
+-            find_codex_home_from_env(/*codex_home_env*/ None).expect("default CODEX_HOME");
++        let resolved = find_codex_home_from_env(/*meshagent_codex_home_env*/ None)
++            .expect("default MESHAGENT_CODEX_HOME");
+         let mut expected = home_dir().expect("home dir");
+         expected.push(".meshagent");
+         expected.push("codex");
+diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
+index 1d9340c..069f934 100644
+--- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
+@@ -420,7 +420,7 @@ pub fn main() -> Result<()> {
+     let ret = real_main();
+     if let Err(e) = &ret {
+         // Best-effort: log unexpected top-level errors.
+-        if let Ok(codex_home) = std::env::var("CODEX_HOME") {
++        if let Ok(codex_home) = std::env::var("MESHAGENT_CODEX_HOME") {
+             let sbx_dir = sandbox_dir(Path::new(&codex_home));
+             let _ = std::fs::create_dir_all(&sbx_dir);
+             if let Some(mut f) = log_writer(&sbx_dir) {

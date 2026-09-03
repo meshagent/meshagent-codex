@@ -1,0 +1,4015 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MeshAgent Codex Build <codex-build@meshagent.com>
+Date: Wed, 2 Sep 2026 19:40:18 -0700
+Subject: [PATCH] Add MeshAgent authentication and project selection
+
+---
+ codex-rs/cli/src/lib.rs                       |   8 +
+ codex-rs/cli/src/login.rs                     | 414 +++++++++++++---
+ codex-rs/cli/src/main.rs                      | 232 +++++++--
+ codex-rs/cli/tests/debug_models.rs            |  62 +++
+ codex-rs/cli/tests/login.rs                   | 156 +++++-
+ codex-rs/core/src/config/mod.rs               |   3 +-
+ codex-rs/core/src/session/tests.rs            |   1 +
+ codex-rs/core/tests/common/lib.rs             |   6 +-
+ codex-rs/login/MESHAGENT_AUTH_SPEC.md         | 121 +++++
+ .../login/src/auth/default_client_tests.rs    |   2 +-
+ codex-rs/login/src/auth/manager.rs            |  15 +-
+ codex-rs/login/src/lib.rs                     |   1 +
+ .../login/src/meshagent/meshagent_tests.rs    | 321 +++++++++++++
+ codex-rs/login/src/meshagent/mod.rs           | 184 +++++++
+ codex-rs/login/src/meshagent/oauth.rs         | 454 ++++++++++++++++++
+ codex-rs/login/src/meshagent/storage.rs       | 424 ++++++++++++++++
+ codex-rs/model-provider-info/src/lib.rs       |  32 ++
+ codex-rs/model-provider/src/auth.rs           |   5 +-
+ .../model-provider/src/models_endpoint.rs     |  10 +-
+ codex-rs/model-provider/src/provider.rs       |  84 ++++
+ codex-rs/models-manager/src/manager.rs        |   9 +-
+ codex-rs/tui/src/app/event_dispatch.rs        |  53 +-
+ codex-rs/tui/src/app_event.rs                 |  11 +
+ ...p__tests__command_popup_default_items.snap |   1 +
+ codex-rs/tui/src/chatwidget.rs                |   1 +
+ codex-rs/tui/src/chatwidget/project_popup.rs  | 108 +++++
+ codex-rs/tui/src/chatwidget/slash_dispatch.rs |   4 +
+ codex-rs/tui/src/chatwidget/tests/helpers.rs  |   3 +
+ .../chatwidget/tests/popups_and_settings.rs   |  39 ++
+ codex-rs/tui/src/lib.rs                       |  27 +-
+ codex-rs/tui/src/onboarding/auth.rs           | 256 +++++++++-
+ .../tui/src/onboarding/onboarding_screen.rs   |  15 +-
+ codex-rs/tui/src/slash_command.rs             |  10 +
+ codex-rs/tui/src/status/tests.rs              |   9 +
+ 34 files changed, 2954 insertions(+), 127 deletions(-)
+ create mode 100644 codex-rs/login/MESHAGENT_AUTH_SPEC.md
+ create mode 100644 codex-rs/login/src/meshagent/meshagent_tests.rs
+ create mode 100644 codex-rs/login/src/meshagent/mod.rs
+ create mode 100644 codex-rs/login/src/meshagent/oauth.rs
+ create mode 100644 codex-rs/login/src/meshagent/storage.rs
+ create mode 100644 codex-rs/tui/src/chatwidget/project_popup.rs
+
+diff --git a/codex-rs/cli/src/lib.rs b/codex-rs/cli/src/lib.rs
+index 75f553a..5ec4aad 100644
+--- a/codex-rs/cli/src/lib.rs
++++ b/codex-rs/cli/src/lib.rs
+@@ -15,12 +15,20 @@ pub use debug_sandbox::run_command_under_windows_sandbox;
+ pub use login::read_access_token_from_stdin;
+ pub use login::read_api_key_from_stdin;
+ pub use login::run_login_status;
++pub use login::run_login_status_meshagent;
++pub use login::run_login_status_openai;
+ pub use login::run_login_with_access_token;
+ pub use login::run_login_with_api_key;
+ pub use login::run_login_with_chatgpt;
+ pub use login::run_login_with_device_code;
+ pub use login::run_login_with_device_code_fallback_to_browser;
++pub use login::run_login_with_meshagent;
+ pub use login::run_logout;
++pub use login::run_logout_meshagent;
++pub use login::run_logout_openai;
++pub use login::run_meshagent_account_switch;
++pub use login::run_meshagent_project_activate;
++pub use login::run_meshagent_project_list;
+ 
+ #[derive(Debug, Default, Args)]
+ pub struct SandboxStateArgs {
+diff --git a/codex-rs/cli/src/login.rs b/codex-rs/cli/src/login.rs
+index 22e607c..37d01d1 100644
+--- a/codex-rs/cli/src/login.rs
++++ b/codex-rs/cli/src/login.rs
+@@ -20,6 +20,8 @@ use codex_login::is_workload_identity_selected;
+ use codex_login::login_with_access_token;
+ use codex_login::login_with_api_key;
+ use codex_login::logout_with_revoke;
++use codex_login::meshagent::MeshAgentAuth;
++use codex_login::meshagent::MeshAgentProject;
+ use codex_login::run_device_code_login;
+ use codex_login::run_login_server;
+ use codex_protocol::auth::AuthMode;
+@@ -28,6 +30,7 @@ use codex_utils_cli::CliConfigOverrides;
+ use std::fs::OpenOptions;
+ use std::io::IsTerminal;
+ use std::io::Read;
++use std::io::Write as _;
+ use std::path::Path;
+ use std::path::PathBuf;
+ use tracing_appender::non_blocking;
+@@ -440,19 +443,302 @@ pub async fn run_login_with_device_code_fallback_to_browser(
+     }
+ }
+ 
+-pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
+-    let config = load_config_or_exit(cli_config_overrides).await;
++pub async fn run_login_with_meshagent(api_url: Option<String>) -> ! {
++    let auth = meshagent_auth_or_exit();
++    let attempt = match auth.start_login(api_url.as_deref()) {
++        Ok(attempt) => attempt,
++        Err(error) => {
++            eprintln!("Error starting MeshAgent login: {error}");
++            std::process::exit(1);
++        }
++    };
++    eprintln!(
++        "Waiting for MeshAgent login on http://localhost:8765.\nIf your browser did not open, navigate to:\n\n{}",
++        attempt.auth_url
++    );
++    if let Err(error) = attempt.open_browser() {
++        tracing::warn!("failed to open MeshAgent login URL: {error}");
++    }
++    match attempt.complete().await {
++        Ok(result) => {
++            if result.account.active_project.is_none() {
++                match select_meshagent_project(&result.projects) {
++                    Ok(project_id) => {
++                        if let Err(error) = auth.set_active_project(&project_id) {
++                            eprintln!("Error selecting MeshAgent project: {error}");
++                            std::process::exit(1);
++                        }
++                    }
++                    Err(error) => {
++                        eprintln!("Error selecting MeshAgent project: {error}");
++                        std::process::exit(1);
++                    }
++                }
++            }
++            eprintln!("Successfully logged in to MeshAgent");
++            std::process::exit(0);
++        }
++        Err(error) => {
++            eprintln!("Error logging in to MeshAgent: {error}");
++            std::process::exit(1);
++        }
++    }
++}
+ 
+-    if is_workload_identity_selected() {
+-        match AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await {
+-            Ok(_) => {
+-                eprintln!("Logged in using workload identity");
+-                std::process::exit(0);
++pub fn run_meshagent_account_switch(selector: Option<String>) -> ! {
++    let auth = meshagent_auth_or_exit();
++    let selector = match selector {
++        Some(selector) => selector,
++        None if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() => {
++            match auth.accounts() {
++                Ok(accounts) => print_meshagent_accounts(&accounts),
++                Err(error) => {
++                    eprintln!("Error listing MeshAgent accounts: {error}");
++                    std::process::exit(1);
++                }
+             }
+-            Err(err) => {
+-                eprintln!("Error checking login status: {err}");
++            std::process::exit(0);
++        }
++        None => match select_meshagent_account(&auth) {
++            Ok(selector) => selector,
++            Err(error) => {
++                eprintln!("Error switching MeshAgent account: {error}");
+                 std::process::exit(1);
+             }
++        },
++    };
++    match auth.switch_account(&selector) {
++        Ok(account) => {
++            let identity = account.email.unwrap_or(account.user_id);
++            eprintln!("Active MeshAgent account: {identity}");
++            std::process::exit(0);
++        }
++        Err(error) => {
++            eprintln!("Error switching MeshAgent account: {error}");
++            std::process::exit(1);
++        }
++    }
++}
++
++fn print_meshagent_accounts(accounts: &[codex_login::meshagent::MeshAgentAccount]) {
++    if accounts.is_empty() {
++        println!("No saved MeshAgent accounts.");
++        return;
++    }
++    for account in accounts {
++        let marker = if account.active { "*" } else { " " };
++        let label = account
++            .display_name
++            .as_deref()
++            .or(account.email.as_deref())
++            .unwrap_or(&account.user_id);
++        println!(
++            "{marker} {label} [{}] @ {}",
++            account.user_id, account.api_url
++        );
++    }
++}
++
++pub async fn run_meshagent_project_list() -> ! {
++    let auth = meshagent_auth_or_exit();
++    let active_project = auth
++        .active_account()
++        .unwrap_or_else(|error| {
++            eprintln!("Error loading active MeshAgent account: {error}");
++            std::process::exit(1);
++        })
++        .and_then(|account| account.active_project);
++    match auth.projects().await {
++        Ok(projects) => {
++            if projects.is_empty() {
++                eprintln!("No MeshAgent projects are available");
++                std::process::exit(0);
++            }
++            for project in projects {
++                let marker = if active_project.as_deref() == Some(project.id.as_str()) {
++                    "*"
++                } else {
++                    " "
++                };
++                match project.project_key.as_deref() {
++                    Some(key) => println!("{marker} {}\t{}\t{key}", project.id, project.name),
++                    None => println!("{marker} {}\t{}", project.id, project.name),
++                }
++            }
++            std::process::exit(0);
++        }
++        Err(error) => {
++            eprintln!("Error listing MeshAgent projects: {error}");
++            std::process::exit(1);
++        }
++    }
++}
++
++pub async fn run_meshagent_project_activate(selector: Option<String>) -> ! {
++    let auth = meshagent_auth_or_exit();
++    let selector = match selector {
++        Some(selector) => selector,
++        None => {
++            let projects = auth.projects().await.unwrap_or_else(|error| {
++                eprintln!("Error listing MeshAgent projects: {error}");
++                std::process::exit(1);
++            });
++            select_meshagent_project(&projects).unwrap_or_else(|error| {
++                eprintln!("Error selecting MeshAgent project: {error}");
++                std::process::exit(1);
++            })
++        }
++    };
++    match auth.activate_project(&selector).await {
++        Ok(project) => {
++            eprintln!(
++                "Active MeshAgent project: {} ({})",
++                project.name, project.id
++            );
++            std::process::exit(0);
++        }
++        Err(error) => {
++            eprintln!("Error activating MeshAgent project: {error}");
++            std::process::exit(1);
++        }
++    }
++}
++
++fn select_meshagent_project(projects: &[MeshAgentProject]) -> std::io::Result<String> {
++    match projects {
++        [] => {
++            return Err(std::io::Error::other(
++                "this account has no available projects",
++            ));
++        }
++        [project] => return Ok(project.id.clone()),
++        _ => {}
++    }
++    if !std::io::stdin().is_terminal() {
++        return Err(std::io::Error::other(
++            "multiple projects are available; specify one or run from an interactive terminal",
++        ));
++    }
++    eprintln!("Choose a MeshAgent project:");
++    for (index, project) in projects.iter().enumerate() {
++        eprintln!("  {}. {} ({})", index + 1, project.name, project.id);
++    }
++    prompt_index(projects.len()).map(|index| projects[index].id.clone())
++}
++
++fn select_meshagent_account(auth: &MeshAgentAuth) -> std::io::Result<String> {
++    let accounts = auth.accounts()?;
++    if accounts.is_empty() {
++        return Err(std::io::Error::other("no saved MeshAgent accounts"));
++    }
++    eprintln!("Choose a MeshAgent account:");
++    for (index, account) in accounts.iter().enumerate() {
++        let label = account
++            .email
++            .as_deref()
++            .or(account.display_name.as_deref())
++            .unwrap_or(&account.user_id);
++        eprintln!("  {}. {} ({})", index + 1, label, account.api_url);
++    }
++    prompt_index(accounts.len()).map(|index| accounts[index].user_id.clone())
++}
++
++fn prompt_index(count: usize) -> std::io::Result<usize> {
++    eprint!("Selection: ");
++    std::io::stderr().flush()?;
++    let mut input = String::new();
++    std::io::stdin().read_line(&mut input)?;
++    let selected = input
++        .trim()
++        .parse::<usize>()
++        .ok()
++        .filter(|selected| (1..=count).contains(selected))
++        .ok_or_else(|| std::io::Error::other("invalid selection"))?;
++    Ok(selected - 1)
++}
++
++fn meshagent_auth_or_exit() -> MeshAgentAuth {
++    MeshAgentAuth::from_environment().unwrap_or_else(|error| {
++        eprintln!("Error loading MeshAgent authentication: {error}");
++        std::process::exit(1);
++    })
++}
++
++pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
++    let config = load_config_or_exit(cli_config_overrides).await;
++    let meshagent = MeshAgentAuth::from_environment()
++        .and_then(|auth| auth.active_account())
++        .ok()
++        .flatten();
++    let meshagent_authenticated = meshagent
++        .as_ref()
++        .is_some_and(|account| account.authenticated);
++    print_meshagent_status(meshagent);
++    let openai_status = openai_login_status(&config).await;
++    let openai_authenticated = matches!(&openai_status, Ok(Some(_)));
++    match openai_status {
++        Ok(Some(message)) => eprintln!("OpenAI: {message}"),
++        Ok(None) => eprintln!("OpenAI: not logged in"),
++        Err(error) => eprintln!("OpenAI: error checking login status: {error}"),
++    }
++    std::process::exit(if meshagent_authenticated || openai_authenticated {
++        0
++    } else {
++        1
++    });
++}
++
++pub async fn run_login_status_meshagent() -> ! {
++    let account = MeshAgentAuth::from_environment()
++        .and_then(|auth| auth.active_account())
++        .unwrap_or_else(|error| {
++            eprintln!("Error checking MeshAgent login status: {error}");
++            std::process::exit(1);
++        });
++    let authenticated = account
++        .as_ref()
++        .is_some_and(|account| account.authenticated);
++    print_meshagent_status(account);
++    std::process::exit(if authenticated { 0 } else { 1 });
++}
++
++pub async fn run_login_status_openai(cli_config_overrides: CliConfigOverrides) -> ! {
++    let config = load_config_or_exit(cli_config_overrides).await;
++    match openai_login_status(&config).await {
++        Ok(Some(message)) => {
++            eprintln!("{message}");
++            std::process::exit(0);
++        }
++        Ok(None) => {
++            eprintln!("Not logged in");
++            std::process::exit(1);
++        }
++        Err(error) => {
++            eprintln!("Error checking login status: {error}");
++            std::process::exit(1);
++        }
++    }
++}
++
++fn print_meshagent_status(account: Option<codex_login::meshagent::MeshAgentAccount>) {
++    match account.filter(|account| account.authenticated) {
++        Some(account) => {
++            let identity = account.email.unwrap_or(account.user_id);
++            let project = account
++                .active_project
++                .map(|project| format!(" (project: {project})"))
++                .unwrap_or_default();
++            eprintln!("MeshAgent: logged in as {identity}{project}");
++        }
++        None => eprintln!("MeshAgent: not logged in"),
++    }
++}
++
++async fn openai_login_status(config: &Config) -> Result<Option<String>, String> {
++    if is_workload_identity_selected() {
++        match AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ false).await {
++            Ok(_) => return Ok(Some("Logged in using workload identity".to_string())),
++            Err(error) => return Err(error.to_string()),
+         }
+     }
+ 
+@@ -463,93 +749,111 @@ pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
+     {
+         Ok(Some(auth)) => match auth.auth_mode() {
+             AuthMode::ApiKey => match auth.get_token() {
+-                Ok(api_key) => {
+-                    eprintln!("Logged in using an API key - {}", safe_format_key(&api_key));
+-                    std::process::exit(0);
+-                }
+-                Err(e) => {
+-                    eprintln!("Unexpected error retrieving API key: {e}");
+-                    std::process::exit(1);
+-                }
++                Ok(api_key) => Ok(Some(format!(
++                    "Logged in using an API key - {}",
++                    safe_format_key(&api_key)
++                ))),
++                Err(error) => Err(format!("Unexpected error retrieving API key: {error}")),
+             },
+             AuthMode::Chatgpt | AuthMode::ChatgptAuthTokens => {
+-                eprintln!("Logged in using ChatGPT");
+-                std::process::exit(0);
++                Ok(Some("Logged in using ChatGPT".to_string()))
+             }
+             AuthMode::Headers => {
+                 unreachable!("header auth cannot be loaded from auth storage")
+             }
+-            AuthMode::AgentIdentity => {
+-                eprintln!("Logged in using access token");
+-                std::process::exit(0);
+-            }
++            AuthMode::AgentIdentity => Ok(Some("Logged in using access token".to_string())),
+             AuthMode::PersonalAccessToken => {
+-                eprintln!("Logged in using personal access token");
+-                std::process::exit(0);
++                Ok(Some("Logged in using personal access token".to_string()))
+             }
+             AuthMode::BedrockApiKey => {
+-                eprintln!("Logged in using Amazon Bedrock API key");
+-                std::process::exit(0);
+-            }
+-            AuthMode::BedrockAccessKeys => {
+-                eprintln!("Logged in using Amazon Bedrock AWS access keys");
+-                std::process::exit(0);
++                Ok(Some("Logged in using Amazon Bedrock API key".to_string()))
+             }
++            AuthMode::BedrockAccessKeys => Ok(Some(
++                "Logged in using Amazon Bedrock AWS access keys".to_string(),
++            )),
+         },
+-        Ok(None) => {
+-            eprintln!("Not logged in");
++        Ok(None) => Ok(None),
++        Err(error) => Err(error.to_string()),
++    }
++}
++
++pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {
++    let config = load_config_or_exit(cli_config_overrides).await;
++    let meshagent_result = MeshAgentAuth::from_environment().and_then(|auth| auth.logout());
++    let openai_result = logout_openai(&config).await;
++    match (meshagent_result, openai_result) {
++        (Ok(false), Ok(false)) => eprintln!("Not logged in"),
++        (Ok(_), Ok(_)) => eprintln!("Successfully logged out"),
++        (meshagent, openai) => {
++            if let Err(error) = meshagent {
++                eprintln!("Error logging out of MeshAgent: {error}");
++            }
++            if let Err(error) = openai {
++                eprintln!("Error logging out of OpenAI: {error}");
++            }
+             std::process::exit(1);
+         }
+-        Err(err) => {
+-            eprintln!("Error checking login status: {err}");
++    }
++    std::process::exit(0);
++}
++
++pub async fn run_logout_openai(cli_config_overrides: CliConfigOverrides) -> ! {
++    let config = load_config_or_exit(cli_config_overrides).await;
++    match logout_openai(&config).await {
++        Ok(true) => eprintln!("Successfully logged out of OpenAI"),
++        Ok(false) => eprintln!("Not logged in to OpenAI"),
++        Err(error) => {
++            eprintln!("Error logging out of OpenAI: {error}");
+             std::process::exit(1);
+         }
+     }
++    std::process::exit(0);
+ }
+ 
+-pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {
+-    let config = load_config_or_exit(cli_config_overrides).await;
++pub fn run_logout_meshagent() -> ! {
++    match meshagent_auth_or_exit().logout() {
++        Ok(true) => eprintln!("Successfully logged out of MeshAgent"),
++        Ok(false) => eprintln!("Not logged in to MeshAgent"),
++        Err(error) => {
++            eprintln!("Error logging out of MeshAgent: {error}");
++            std::process::exit(1);
++        }
++    }
++    std::process::exit(0);
++}
++
++async fn logout_openai(config: &Config) -> Result<bool, String> {
+     let auth_route_config = config.auth_route_config();
+ 
+-    let logged_out = match logout_with_revoke(
++    let logged_out = logout_with_revoke(
+         &config.codex_home,
+         config.cli_auth_credentials_store_mode,
+         config.auth_keyring_backend_kind(),
+         &auth_route_config,
+     )
+     .await
+-    {
+-        Ok(logged_out) => logged_out,
+-        Err(err) => {
+-            eprintln!("Error logging out: {err}");
+-            std::process::exit(1);
+-        }
+-    };
++    .map_err(|error| error.to_string())?;
+ 
+     let cleared_bedrock_config =
+-        if let Some(paths) = ConfigEditsBuilder::bedrock_provider_config_paths_to_clear(&config) {
++        if let Some(paths) = ConfigEditsBuilder::bedrock_provider_config_paths_to_clear(config) {
+             let edits = paths
+                 .into_iter()
+                 .map(|segments| ConfigEdit::ClearPath { segments });
+-            if let Err(err) = ConfigEditsBuilder::for_config(&config)
++            if let Err(error) = ConfigEditsBuilder::for_config(config)
+                 .with_edits(edits)
+                 .apply()
+                 .await
+             {
+-                eprintln!("Error clearing Amazon Bedrock configuration after logout: {err}");
+-                std::process::exit(1);
++                return Err(format!(
++                    "Error clearing Amazon Bedrock configuration after logout: {error}"
++                ));
+             }
+             true
+         } else {
+             false
+         };
+ 
+-    if logged_out || cleared_bedrock_config {
+-        eprintln!("Successfully logged out");
+-    } else {
+-        eprintln!("Not logged in");
+-    }
+-    std::process::exit(0);
++    Ok(logged_out || cleared_bedrock_config)
+ }
+ 
+ async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config {
+diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
+index dde0af3..c263eee 100644
+--- a/codex-rs/cli/src/main.rs
++++ b/codex-rs/cli/src/main.rs
+@@ -1,6 +1,7 @@
+ use clap::Args;
+ use clap::CommandFactory;
+ use clap::Parser;
++use clap::ValueEnum;
+ use clap_complete::Shell;
+ use clap_complete::generate;
+ use codex_app_server_daemon::BootstrapOptions as AppServerBootstrapOptions;
+@@ -13,11 +14,19 @@ use codex_chatgpt::apply_command::run_apply_command;
+ use codex_cli::read_access_token_from_stdin;
+ use codex_cli::read_api_key_from_stdin;
+ use codex_cli::run_login_status;
++use codex_cli::run_login_status_meshagent;
++use codex_cli::run_login_status_openai;
+ use codex_cli::run_login_with_access_token;
+ use codex_cli::run_login_with_api_key;
+ use codex_cli::run_login_with_chatgpt;
+ use codex_cli::run_login_with_device_code;
++use codex_cli::run_login_with_meshagent;
+ use codex_cli::run_logout;
++use codex_cli::run_logout_meshagent;
++use codex_cli::run_logout_openai;
++use codex_cli::run_meshagent_account_switch;
++use codex_cli::run_meshagent_project_activate;
++use codex_cli::run_meshagent_project_list;
+ use codex_cloud_config::cloud_config_bundle_loader_for_storage;
+ use codex_cloud_tasks::Cli as CloudTasksCli;
+ use codex_exec::Cli as ExecCli;
+@@ -145,6 +154,9 @@ enum Subcommand {
+     /// Remove stored authentication credentials.
+     Logout(LogoutCommand),
+ 
++    /// Manage MeshAgent projects.
++    Project(ProjectCommand),
++
+     /// Manage external MCP servers for Codex.
+     Mcp(McpCli),
+ 
+@@ -491,6 +503,14 @@ struct LoginCommand {
+     #[clap(skip)]
+     config_overrides: CliConfigOverrides,
+ 
++    /// Authentication provider. Defaults to MeshAgent.
++    #[arg(long, value_enum)]
++    provider: Option<LoginProvider>,
++
++    /// MeshAgent API URL to authenticate against.
++    #[arg(long, value_name = "URL")]
++    api_url: Option<String>,
++
+     #[arg(
+         long = "with-api-key",
+         help = "Read the API key from stdin (e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`)"
+@@ -532,13 +552,60 @@ struct LoginCommand {
+ #[derive(Debug, clap::Subcommand)]
+ enum LoginSubcommand {
+     /// Show login status.
+-    Status,
++    Status(LoginStatusCommand),
++
++    /// Switch the active saved MeshAgent account.
++    Switch(LoginSwitchCommand),
++}
++
++#[derive(Debug, Parser)]
++struct LoginStatusCommand {
++    /// Show status for only one authentication provider.
++    #[arg(long, value_enum)]
++    provider: Option<LoginProvider>,
++}
++
++#[derive(Debug, Parser)]
++struct LoginSwitchCommand {
++    /// Saved MeshAgent user ID, email, or unambiguous display name.
++    account: Option<String>,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
++enum LoginProvider {
++    Meshagent,
++    Openai,
+ }
+ 
+ #[derive(Debug, Parser)]
+ struct LogoutCommand {
+     #[clap(skip)]
+     config_overrides: CliConfigOverrides,
++
++    /// Authentication provider to log out. Omit to log out of all providers.
++    #[arg(long, value_enum)]
++    provider: Option<LoginProvider>,
++}
++
++#[derive(Debug, Parser)]
++struct ProjectCommand {
++    #[command(subcommand)]
++    action: ProjectSubcommand,
++}
++
++#[derive(Debug, clap::Subcommand)]
++enum ProjectSubcommand {
++    /// List projects available to the active MeshAgent account.
++    List,
++
++    /// Activate a project for subsequent Codex requests.
++    Activate(ProjectActivateCommand),
++}
++
++#[derive(Debug, Parser)]
++struct ProjectActivateCommand {
++    /// MeshAgent project ID, key, or unambiguous name.
++    project: Option<String>,
+ }
+ 
+ #[derive(Debug, Parser)]
+@@ -1522,37 +1589,80 @@ async fn cli_main(
+                 root_config_overrides.clone(),
+             );
+             match login_cli.action {
+-                Some(LoginSubcommand::Status) => {
+-                    run_login_status(login_cli.config_overrides).await;
++                Some(LoginSubcommand::Status(status)) => {
++                    if login_cli.api_url.is_some() {
++                        eprintln!("--api-url is only valid when logging in to MeshAgent.");
++                        std::process::exit(2);
++                    }
++                    match status.provider.or(login_cli.provider) {
++                        Some(LoginProvider::Meshagent) => run_login_status_meshagent().await,
++                        Some(LoginProvider::Openai) => {
++                            run_login_status_openai(login_cli.config_overrides).await
++                        }
++                        None => run_login_status(login_cli.config_overrides).await,
++                    }
+                 }
+-                None => {
+-                    if login_cli.with_api_key && login_cli.with_access_token {
+-                        eprintln!(
+-                            "Choose one login credential source: --with-api-key or --with-access-token."
+-                        );
+-                        std::process::exit(1);
+-                    } else if login_cli.use_device_code {
+-                        run_login_with_device_code(
+-                            login_cli.config_overrides,
+-                            login_cli.issuer_base_url,
+-                            login_cli.client_id,
+-                        )
+-                        .await;
+-                    } else if login_cli.api_key.is_some() {
+-                        eprintln!(
+-                            "The --api-key flag is no longer supported. Pipe the key instead, e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`."
+-                        );
+-                        std::process::exit(1);
+-                    } else if login_cli.with_api_key {
+-                        let api_key = read_api_key_from_stdin();
+-                        run_login_with_api_key(login_cli.config_overrides, api_key).await;
+-                    } else if login_cli.with_access_token {
+-                        let access_token = read_access_token_from_stdin();
+-                        run_login_with_access_token(login_cli.config_overrides, access_token).await;
+-                    } else {
+-                        run_login_with_chatgpt(login_cli.config_overrides).await;
++                Some(LoginSubcommand::Switch(switch)) => {
++                    if matches!(login_cli.provider, Some(LoginProvider::Openai)) {
++                        eprintln!("Account switching is only supported for MeshAgent.");
++                        std::process::exit(2);
++                    }
++                    if login_cli.api_url.is_some() {
++                        eprintln!("--api-url is only valid when logging in to MeshAgent.");
++                        std::process::exit(2);
+                     }
++                    run_meshagent_account_switch(switch.account);
+                 }
++                None => match login_cli.provider.unwrap_or(LoginProvider::Meshagent) {
++                    LoginProvider::Meshagent => {
++                        if login_cli.with_api_key
++                            || login_cli.with_access_token
++                            || login_cli.api_key.is_some()
++                            || login_cli.use_device_code
++                            || login_cli.issuer_base_url.is_some()
++                            || login_cli.client_id.is_some()
++                        {
++                            eprintln!(
++                                "OpenAI credential options require `codex login --provider=openai`."
++                            );
++                            std::process::exit(2);
++                        }
++                        run_login_with_meshagent(login_cli.api_url).await;
++                    }
++                    LoginProvider::Openai => {
++                        if login_cli.api_url.is_some() {
++                            eprintln!("--api-url is only supported for MeshAgent login.");
++                            std::process::exit(2);
++                        }
++                        if login_cli.with_api_key && login_cli.with_access_token {
++                            eprintln!(
++                                "Choose one login credential source: --with-api-key or --with-access-token."
++                            );
++                            std::process::exit(1);
++                        } else if login_cli.use_device_code {
++                            run_login_with_device_code(
++                                login_cli.config_overrides,
++                                login_cli.issuer_base_url,
++                                login_cli.client_id,
++                            )
++                            .await;
++                        } else if login_cli.api_key.is_some() {
++                            eprintln!(
++                                "The --api-key flag is no longer supported. Pipe the key instead, e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`."
++                            );
++                            std::process::exit(1);
++                        } else if login_cli.with_api_key {
++                            let api_key = read_api_key_from_stdin();
++                            run_login_with_api_key(login_cli.config_overrides, api_key).await;
++                        } else if login_cli.with_access_token {
++                            let access_token = read_access_token_from_stdin();
++                            run_login_with_access_token(login_cli.config_overrides, access_token)
++                                .await;
++                        } else {
++                            run_login_with_chatgpt(login_cli.config_overrides).await;
++                        }
++                    }
++                },
+             }
+         }
+         Some(Subcommand::Logout(mut logout_cli)) => {
+@@ -1565,7 +1675,24 @@ async fn cli_main(
+                 &mut logout_cli.config_overrides,
+                 root_config_overrides.clone(),
+             );
+-            run_logout(logout_cli.config_overrides).await;
++            match logout_cli.provider {
++                Some(LoginProvider::Meshagent) => run_logout_meshagent(),
++                Some(LoginProvider::Openai) => run_logout_openai(logout_cli.config_overrides).await,
++                None => run_logout(logout_cli.config_overrides).await,
++            }
++        }
++        Some(Subcommand::Project(project_cli)) => {
++            reject_remote_mode_for_subcommand(
++                root_remote.as_deref(),
++                root_remote_auth_token_env.as_deref(),
++                "project",
++            )?;
++            match project_cli.action {
++                ProjectSubcommand::List => run_meshagent_project_list().await,
++                ProjectSubcommand::Activate(command) => {
++                    run_meshagent_project_activate(command.project).await
++                }
++            }
+         }
+         Some(Subcommand::Completion(completion_cli)) => {
+             reject_remote_mode_for_subcommand(
+@@ -2434,6 +2561,7 @@ fn unsupported_subcommand_name_for_strict_config(
+         Some(Subcommand::App(_)) => Some("app"),
+         Some(Subcommand::Login(_)) => Some("login"),
+         Some(Subcommand::Logout(_)) => Some("logout"),
++        Some(Subcommand::Project(_)) => Some("project"),
+         Some(Subcommand::Completion(_)) => Some("completion"),
+         Some(Subcommand::Update) => Some("update"),
+         Some(Subcommand::Cloud(_)) => Some("cloud"),
+@@ -4920,6 +5048,50 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn meshagent_login_is_the_cli_default() {
++        let cli = MultitoolCli::try_parse_from(["codex", "login"]).expect("parse login");
++        let Some(Subcommand::Login(login)) = cli.subcommand else {
++            panic!("expected login command");
++        };
++        assert_eq!(login.provider, None);
++        assert!(login.action.is_none());
++    }
++
++    #[test]
++    fn openai_login_provider_parses_explicitly() {
++        let cli = MultitoolCli::try_parse_from(["codex", "login", "--provider=openai"])
++            .expect("parse OpenAI login");
++        let Some(Subcommand::Login(login)) = cli.subcommand else {
++            panic!("expected login command");
++        };
++        assert_eq!(login.provider, Some(LoginProvider::Openai));
++    }
++
++    #[test]
++    fn meshagent_account_switch_and_project_commands_parse() {
++        let login = MultitoolCli::try_parse_from(["codex", "login", "switch", "user@example.test"])
++            .expect("parse account switch");
++        let Some(Subcommand::Login(LoginCommand {
++            action: Some(LoginSubcommand::Switch(command)),
++            ..
++        })) = login.subcommand
++        else {
++            panic!("expected login switch");
++        };
++        assert_eq!(command.account.as_deref(), Some("user@example.test"));
++
++        let project = MultitoolCli::try_parse_from(["codex", "project", "activate", "project-key"])
++            .expect("parse project activation");
++        let Some(Subcommand::Project(ProjectCommand {
++            action: ProjectSubcommand::Activate(command),
++        })) = project.subcommand
++        else {
++            panic!("expected project activate");
++        };
++        assert_eq!(command.project.as_deref(), Some("project-key"));
++    }
++
+     fn strict_config_feature_toggle_error(args: &[&str]) -> anyhow::Error {
+         let cli_args = std::iter::once("codex")
+             .chain(std::iter::once("--strict-config"))
+diff --git a/codex-rs/cli/tests/debug_models.rs b/codex-rs/cli/tests/debug_models.rs
+index f9b0503..23df3d8 100644
+--- a/codex-rs/cli/tests/debug_models.rs
++++ b/codex-rs/cli/tests/debug_models.rs
+@@ -1,11 +1,19 @@
+ use std::path::Path;
+ 
+ use anyhow::Result;
++use serde_json::json;
+ use tempfile::TempDir;
++use wiremock::Mock;
++use wiremock::MockServer;
++use wiremock::ResponseTemplate;
++use wiremock::matchers::header;
++use wiremock::matchers::method;
++use wiremock::matchers::path;
+ 
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+     cmd.env("MESHAGENT_CODEX_HOME", codex_home);
++    cmd.env("HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+@@ -38,3 +46,57 @@ fn debug_models_default_prints_json_without_auth() -> Result<()> {
+ 
+     Ok(())
+ }
++
++#[tokio::test]
++async fn debug_models_routes_meshagent_auth_and_project_to_active_account() -> Result<()> {
++    let server = MockServer::start().await;
++    Mock::given(method("GET"))
++        .and(path("/openai/v1/models"))
++        .and(header("authorization", "Bearer mesh-token"))
++        .and(header("Meshagent-Project-Id", "project-1"))
++        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"models": []})))
++        .expect(1)
++        .mount(&server)
++        .await;
++
++    let codex_home = TempDir::new()?;
++    let settings_dir = codex_home.path().join(".meshagent");
++    std::fs::create_dir_all(&settings_dir)?;
++    std::fs::write(
++        settings_dir.join("settings.json"),
++        serde_json::to_vec_pretty(&json!({
++            "active_user_id": "mesh-user",
++            "users": {
++                "mesh-user": {
++                    "profile": {
++                        "id": "mesh-user",
++                        "email": "mesh@example.test"
++                    },
++                    "api_url": server.uri(),
++                    "session": {
++                        "access_token": "mesh-token",
++                        "refresh_token": "mesh-refresh",
++                        "expires_at": 4102444800_i64
++                    },
++                    "project": {
++                        "active_project": "project-1"
++                    }
++                }
++            }
++        }))?,
++    )?;
++
++    let output = codex_command(codex_home.path())?
++        .env("NO_PROXY", "127.0.0.1,localhost")
++        .env("no_proxy", "127.0.0.1,localhost")
++        .args(["debug", "models"])
++        .output()?;
++
++    assert!(
++        output.status.success(),
++        "{}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    server.verify().await;
++    Ok(())
++}
+diff --git a/codex-rs/cli/tests/login.rs b/codex-rs/cli/tests/login.rs
+index 5bd589d..852fe68 100644
+--- a/codex-rs/cli/tests/login.rs
++++ b/codex-rs/cli/tests/login.rs
+@@ -12,6 +12,7 @@ use codex_login::AuthKeyringBackendKind;
+ use codex_login::CLIENT_ID;
+ use codex_login::CODEX_ACCESS_TOKEN_ENV_VAR;
+ use codex_login::REVOKE_TOKEN_URL_OVERRIDE_ENV_VAR;
++use codex_login::login_with_api_key;
+ use codex_login::login_with_bedrock_access_keys;
+ use codex_protocol::shell_environment::OPENAI_FEDERATION_RULE_ID_ENV_VAR;
+ use codex_protocol::shell_environment::OPENAI_IDENTITY_TOKEN_FILE_ENV_VAR;
+@@ -30,6 +31,7 @@ use wiremock::matchers::path;
+ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+     cmd.env("MESHAGENT_CODEX_HOME", codex_home);
++    cmd.env("HOME", codex_home);
+     Ok(cmd)
+ }
+ 
+@@ -56,6 +58,7 @@ fn login_with_api_key_reads_stdin_and_writes_auth_json() -> Result<()> {
+         "-c",
+         "forced_login_method=\"api\"",
+         "login",
++        "--provider=openai",
+         "--with-api-key",
+     ])
+     .write_stdin("sk-test\n")
+@@ -71,6 +74,145 @@ fn login_with_api_key_reads_stdin_and_writes_auth_json() -> Result<()> {
+     Ok(())
+ }
+ 
++#[test]
++fn login_provider_validation_rejects_mismatched_options() -> Result<()> {
++    let codex_home = TempDir::new()?;
++    for (args, expected) in [
++        (
++            vec!["login", "--with-api-key"],
++            "OpenAI credential options require `codex login --provider=openai`.",
++        ),
++        (
++            vec![
++                "login",
++                "--provider=openai",
++                "--api-url",
++                "https://mesh.example.test",
++            ],
++            "--api-url is only supported for MeshAgent login.",
++        ),
++        (
++            vec!["login", "--api-url", "https://mesh.example.test", "status"],
++            "--api-url is only valid when logging in to MeshAgent.",
++        ),
++        (
++            vec!["login", "--provider=openai", "switch", "user-1"],
++            "Account switching is only supported for MeshAgent.",
++        ),
++    ] {
++        codex_command(codex_home.path())?
++            .args(args)
++            .assert()
++            .code(2)
++            .stderr(contains(expected));
++    }
++    Ok(())
++}
++
++#[test]
++fn account_switch_without_selector_lists_saved_accounts_noninteractively() -> Result<()> {
++    let codex_home = TempDir::new()?;
++    let settings_dir = codex_home.path().join(".meshagent");
++    std::fs::create_dir_all(&settings_dir)?;
++    std::fs::write(
++        settings_dir.join("settings.json"),
++        serde_json::to_vec_pretty(&json!({
++            "active_user_id": "user-2",
++            "users": {
++                "user-1": {
++                    "profile": {
++                        "id": "user-1",
++                        "first_name": "One",
++                        "last_name": "User",
++                        "email": "one@example.test"
++                    },
++                    "api_url": "https://one.example.test",
++                    "session": { "access_token": "token-1" }
++                },
++                "user-2": {
++                    "profile": {
++                        "id": "user-2",
++                        "first_name": "Two",
++                        "last_name": "User",
++                        "email": "two@example.test"
++                    },
++                    "api_url": "https://two.example.test",
++                    "session": { "access_token": "token-2" }
++                }
++            }
++        }))?,
++    )?;
++
++    codex_command(codex_home.path())?
++        .args(["login", "switch"])
++        .assert()
++        .success()
++        .stdout(
++            "* Two User [user-2] @ https://two.example.test\n  One User [user-1] @ https://one.example.test\n",
++        );
++    Ok(())
++}
++
++#[test]
++fn provider_scoped_logout_preserves_other_credentials() -> Result<()> {
++    for (args, meshagent_session_remains, openai_auth_remains) in [
++        (vec!["logout", "--provider=openai"], true, false),
++        (vec!["logout", "--provider=meshagent"], false, true),
++        (vec!["logout"], false, false),
++    ] {
++        let codex_home = TempDir::new()?;
++        write_file_auth_config(codex_home.path())?;
++        login_with_api_key(
++            codex_home.path(),
++            "sk-openai-test",
++            AuthCredentialsStoreMode::File,
++            AuthKeyringBackendKind::default(),
++        )?;
++        let settings_dir = codex_home.path().join(".meshagent");
++        std::fs::create_dir_all(&settings_dir)?;
++        let settings_path = settings_dir.join("settings.json");
++        std::fs::write(
++            &settings_path,
++            serde_json::to_vec_pretty(&json!({
++                "active_user_id": "mesh-user",
++                "users": {
++                    "mesh-user": {
++                        "profile": {
++                            "id": "mesh-user",
++                            "email": "mesh@example.test"
++                        },
++                        "api_url": "https://mesh.example.test",
++                        "session": {
++                            "access_token": "mesh-token",
++                            "refresh_token": "mesh-refresh",
++                            "expires_at": 4102444800_i64
++                        },
++                        "project": {
++                            "active_project": "project-1"
++                        }
++                    }
++                }
++            }))?,
++        )?;
++
++        codex_command(codex_home.path())?
++            .args(args)
++            .assert()
++            .success();
++
++        let settings: Value = serde_json::from_slice(&std::fs::read(&settings_path)?)?;
++        assert_eq!(
++            settings["users"]["mesh-user"]["session"].is_object(),
++            meshagent_session_remains
++        );
++        assert_eq!(
++            codex_home.path().join("auth.json").exists(),
++            openai_auth_remains
++        );
++    }
++    Ok(())
++}
++
+ #[test]
+ fn login_status_reports_auth_storage_errors() -> Result<()> {
+     let codex_home = TempDir::new()?;
+@@ -78,7 +220,7 @@ fn login_status_reports_auth_storage_errors() -> Result<()> {
+     std::fs::write(codex_home.path().join("auth.json"), "{invalid json")?;
+ 
+     codex_command(codex_home.path())?
+-        .args(["login", "status"])
++        .args(["login", "status", "--provider=openai"])
+         .assert()
+         .failure()
+         .stderr(contains("Error checking login status:"));
+@@ -96,7 +238,7 @@ fn login_status_validates_configured_workload_identity() -> Result<()> {
+         .env_remove(CODEX_ACCESS_TOKEN_ENV_VAR)
+         .env(OPENAI_FEDERATION_RULE_ID_ENV_VAR, "rule-test")
+         .env(OPENAI_IDENTITY_TOKEN_FILE_ENV_VAR, &missing_assertion)
+-        .args(["login", "status"])
++        .args(["login", "status", "--provider=openai"])
+         .assert()
+         .failure()
+         .stderr(contains("could not read workload identity assertion file"));
+@@ -189,7 +331,7 @@ fn login_with_access_token_rejects_invalid_jwt() -> Result<()> {
+     write_file_auth_config(codex_home.path())?;
+ 
+     let mut cmd = codex_command(codex_home.path())?;
+-    cmd.args(["login", "--with-access-token"])
++    cmd.args(["login", "--provider=openai", "--with-access-token"])
+         .write_stdin("not-a-jwt\n")
+         .assert()
+         .failure()
+@@ -314,7 +456,13 @@ async fn device_login_revokes_existing_auth_before_requesting_new_tokens() -> Re
+     .env("no_proxy", "127.0.0.1,localhost")
+     .env_remove("CODEX_ACCESS_TOKEN")
+     .env_remove("OPENAI_API_KEY")
+-    .args(["login", "--device-auth", "--experimental_issuer", &issuer])
++    .args([
++        "login",
++        "--provider=openai",
++        "--device-auth",
++        "--experimental_issuer",
++        &issuer,
++    ])
+     .assert()
+     .success()
+     .stderr(contains("Successfully logged in"));
+diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
+index 44a0411..820f912 100644
+--- a/codex-rs/core/src/config/mod.rs
++++ b/codex-rs/core/src/config/mod.rs
+@@ -288,6 +288,7 @@ pub(crate) async fn test_config() -> Config {
+     Config::load_from_base_config_with_overrides(
+         ConfigToml {
+             model: Some("gpt-5.5".to_string()),
++            model_provider: Some("openai".to_string()),
+             ..Default::default()
+         },
+         ConfigOverrides::default(),
+@@ -3712,7 +3713,7 @@ impl Config {
+ 
+         let model_provider_id = model_provider
+             .or(cfg.model_provider)
+-            .unwrap_or_else(|| "openai".to_string());
++            .unwrap_or_else(|| "meshagent".to_string());
+         let model_provider = model_providers
+             .get(&model_provider_id)
+             .ok_or_else(|| {
+diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
+index e962382..c31a76d 100644
+--- a/codex-rs/core/src/session/tests.rs
++++ b/codex-rs/core/src/session/tests.rs
+@@ -4913,6 +4913,7 @@ async fn build_test_config(codex_home: &Path) -> Config {
+         .codex_home(codex_home.to_path_buf())
+         .harness_overrides(ConfigOverrides {
+             model: Some("gpt-5.5".to_string()),
++            model_provider: Some("openai".to_string()),
+             ..Default::default()
+         })
+         .build()
+diff --git a/codex-rs/core/tests/common/lib.rs b/codex-rs/core/tests/common/lib.rs
+index 5705355..ce10059 100644
+--- a/codex-rs/core/tests/common/lib.rs
++++ b/codex-rs/core/tests/common/lib.rs
+@@ -231,6 +231,7 @@ allow_local_binding = true
+ #[cfg(target_os = "linux")]
+ fn default_test_overrides() -> ConfigOverrides {
+     ConfigOverrides {
++        model_provider: Some("openai".to_string()),
+         codex_linux_sandbox_exe: Some(
+             find_codex_linux_sandbox_exe().expect("should find binary for codex-linux-sandbox"),
+         ),
+@@ -240,7 +241,10 @@ fn default_test_overrides() -> ConfigOverrides {
+ 
+ #[cfg(not(target_os = "linux"))]
+ fn default_test_overrides() -> ConfigOverrides {
+-    ConfigOverrides::default()
++    ConfigOverrides {
++        model_provider: Some("openai".to_string()),
++        ..ConfigOverrides::default()
++    }
+ }
+ 
+ #[cfg(target_os = "linux")]
+diff --git a/codex-rs/login/MESHAGENT_AUTH_SPEC.md b/codex-rs/login/MESHAGENT_AUTH_SPEC.md
+new file mode 100644
+index 0000000..17167d7
+--- /dev/null
++++ b/codex-rs/login/MESHAGENT_AUTH_SPEC.md
+@@ -0,0 +1,121 @@
++# MeshAgent authentication specification
++
++This document defines the MeshAgent-specific authentication behavior carried by
++the MeshAgent Codex distribution. The installed executable and app-server
++component retain the upstream names `codex` and `codex-app-server`.
++
++## Credential domains
++
++MeshAgent and OpenAI credentials are independent. MeshAgent credentials use the
++same multi-account store as the MeshAgent CLI, `~/.meshagent/settings.json`.
++OpenAI credentials continue to use Codex's `auth.json` beneath
++`MESHAGENT_CODEX_HOME`. A user may therefore be signed in to both services at
++the same time, and logging in to either service must not remove credentials for
++the other.
++
++The MeshAgent store is a typed, version-compatible representation of the
++MeshAgent CLI settings. Each saved user retains its profile, API URL, OAuth
++session, active project, API-key selections, and LLM proxy token. A successful
++login adds or updates the authenticated user and makes that user active without
++removing other saved users.
++
++## CLI contract
++
++`codex login` and any first-run interactive login default to MeshAgent.
++
++Supported commands are:
++
++```text
++codex login
++codex login --api-url URL
++codex login --provider=meshagent [--api-url URL]
++codex login --provider=openai
++codex login --provider=openai --device-auth
++codex login --provider=openai --with-api-key
++codex login --provider=openai --with-access-token
++codex login status [--provider=meshagent|openai]
++codex login switch [ACCOUNT]
++codex project list
++codex project activate [PROJECT]
++codex logout
++codex logout --provider=meshagent
++codex logout --provider=openai
++```
++
++`ACCOUNT` accepts the saved MeshAgent user ID, email address, or an
++unambiguous display name. When it is omitted on an interactive terminal, Codex
++shows a picker. A non-interactive invocation without `ACCOUNT` lists the saved
++accounts, with the active account marked, matching the MeshAgent Rust CLI.
++Switching changes the active saved user without starting OAuth.
++
++`codex project list` lists projects available to the active MeshAgent account
++and marks its active project. `codex project activate PROJECT` accepts a project
++ID, project key, exact project name, or unambiguous case-insensitive project
++name. If `PROJECT` is omitted on an interactive terminal, Codex shows a picker.
++Project selection is stored on the active MeshAgent account.
++
++`--api-url` applies only to MeshAgent login and is rejected for OpenAI login or
++for `status` and `switch`. Resolution follows the MeshAgent CLI precedence:
++the explicit flag, `MESHAGENT_API_URL`, the active profile's saved API URL, and
++finally `https://api.meshagent.com`. The resolved URL is normalized and saved
++with the authenticated profile.
++
++OpenAI-only credential flags require `--provider=openai`; they never silently
++change the default provider.
++
++`codex logout --provider=meshagent` clears the active MeshAgent user's session,
++matching `meshagent auth logout`, while retaining saved profiles and other
++users. `codex logout --provider=openai` invokes the existing Codex logout and
++does not alter MeshAgent settings. Unqualified `codex logout` attempts both
++operations and reports their combined result. MCP OAuth credentials remain
++managed by `codex mcp logout`.
++
++## OAuth and session behavior
++
++MeshAgent login uses authorization-code OAuth with PKCE S256, a random state,
++and the MeshAgent CLI callback `http://localhost:8765/callback`. Codex validates
++the state before exchanging the code at `/oauth/token`, resolves the user at
++`/accounts/profiles/me`, and persists the resulting session. The OAuth client,
++scope, and API URL retain the MeshAgent CLI environment overrides.
++
++Access tokens refresh when their stored expiration is within five minutes.
++Refresh uses the OAuth refresh-token grant and persists rotated refresh tokens.
++An unauthorized model request forces one refresh before the request is retried.
++
++## Project and model routing
++
++The distribution includes a built-in `meshagent` model provider and selects it
++when no model provider is explicitly configured. OpenAI remains available as
++the built-in `openai` provider. Signing in does not itself switch an explicitly
++configured model provider.
++
++MeshAgent requests use the active profile's API URL with `/openai/v1`, attach
++the active OAuth bearer token, and send the active project as
++`Meshagent-Project-Id`. Login preserves a valid existing project, selects the
++only available project automatically, or asks the user to choose when multiple
++projects are available. A missing project is reported before model execution.
++
++## Interactive and app-server behavior
++
++First-run TUI onboarding presents MeshAgent as the default sign-in method and
++uses the same login, storage, refresh, and project-selection implementation.
++OpenAI login remains available explicitly through
++`codex login --provider=openai`. The existing app-server OpenAI account RPC
++remains independent from MeshAgent's shared settings, while the app-server
++model provider resolves MeshAgent credentials for model requests. One
++credential domain therefore cannot hide or delete the other.
++
++The TUI `/project` command opens a project picker for the active MeshAgent
++account. A selection updates shared settings and the model-provider configuration
++used by subsequent turns. It never changes the project of an in-flight turn.
++
++The OAuth callback listener is temporary and belongs to the invoking Codex
++process. It does not create or join a shared daemon or process group.
++
++## Verification
++
++Tests must cover provider/flag validation, API URL precedence, OAuth state and
++PKCE handling, token refresh and rotation, multi-account persistence and
++switching, per-account projects, independent login and targeted logout, model
++request headers, unauthorized retry, and TUI onboarding behavior. Network tests
++use local mock servers only.
+diff --git a/codex-rs/login/src/auth/default_client_tests.rs b/codex-rs/login/src/auth/default_client_tests.rs
+index 4565f79..7c7f4ea 100644
+--- a/codex-rs/login/src/auth/default_client_tests.rs
++++ b/codex-rs/login/src/auth/default_client_tests.rs
+@@ -289,7 +289,7 @@ fn test_macos() {
+     let user_agent = get_codex_user_agent();
+     let originator = regex_lite::escape(originator().value.as_str());
+     let re = Regex::new(&format!(
+-        r"^{originator}/\d+\.\d+\.\d+ \(Mac OS \d+\.\d+\.\d+; (x86_64|arm64)\) (\S+)$"
++        r"^{originator}/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)? \(Mac OS \d+\.\d+\.\d+; (x86_64|arm64)\) (\S+)$"
+     ))
+     .unwrap();
+     assert!(re.is_match(&user_agent));
+diff --git a/codex-rs/login/src/auth/manager.rs b/codex-rs/login/src/auth/manager.rs
+index 2949b70..157b07f 100644
+--- a/codex-rs/login/src/auth/manager.rs
++++ b/codex-rs/login/src/auth/manager.rs
+@@ -2286,6 +2286,16 @@ impl AuthManager {
+     }
+ 
+     pub fn external_bearer_only(config: ModelProviderAuthInfo) -> Arc<Self> {
++        Self::external_auth_only(Arc::new(BearerTokenRefresher::new(config)))
++    }
++
++    pub fn meshagent_only() -> std::io::Result<Arc<Self>> {
++        Ok(Self::external_auth_only(Arc::new(
++            crate::meshagent::MeshAgentAuth::from_environment()?,
++        )))
++    }
++
++    fn external_auth_only(external_auth: Arc<dyn ExternalAuth>) -> Arc<Self> {
+         let (auth_change_tx, _auth_change_rx) = watch::channel(0);
+         Arc::new(Self {
+             codex_home: PathBuf::from("non-existent"),
+@@ -2305,10 +2315,9 @@ impl AuthManager {
+             refresh_lock: Semaphore::new(/*permits*/ 1),
+             agent_identity_lock: Semaphore::new(/*permits*/ 1),
+             agent_identity_bootstrap_cooldown: Mutex::default(),
+-            external_auth: RwLock::new(Some(Arc::new(BearerTokenRefresher::new(config)))),
++            external_auth: RwLock::new(Some(external_auth)),
+             workload_identity_selected: false,
+-            // External bearer auth refreshes by running the provider's command and never makes
+-            // auth-owned HTTP requests, so this route is intentionally inert.
++            // External auth owns its refresh transport, so this manager-level route is inert.
+             auth_route_config: AuthRouteConfig::from_http_client_factory(HttpClientFactory::new(
+                 OutboundProxyPolicy::ReqwestDefault,
+             )),
+diff --git a/codex-rs/login/src/lib.rs b/codex-rs/login/src/lib.rs
+index 3365972..92ff35a 100644
+--- a/codex-rs/login/src/lib.rs
++++ b/codex-rs/login/src/lib.rs
+@@ -1,5 +1,6 @@
+ pub mod auth;
+ pub mod auth_env_telemetry;
++pub mod meshagent;
+ pub mod test_support;
+ pub mod token_data;
+ 
+diff --git a/codex-rs/login/src/meshagent/meshagent_tests.rs b/codex-rs/login/src/meshagent/meshagent_tests.rs
+new file mode 100644
+index 0000000..8da3d1f
+--- /dev/null
++++ b/codex-rs/login/src/meshagent/meshagent_tests.rs
+@@ -0,0 +1,321 @@
++use super::storage::CliSettings;
++use super::storage::StoredProjectSettings;
++use super::storage::StoredSession;
++use super::storage::StoredUserProfile;
++use super::storage::StoredUserSettings;
++use super::*;
++use pretty_assertions::assert_eq;
++use std::collections::BTreeMap;
++use tempfile::tempdir;
++use wiremock::Mock;
++use wiremock::MockServer;
++use wiremock::ResponseTemplate;
++use wiremock::matchers::header;
++use wiremock::matchers::method;
++use wiremock::matchers::path;
++
++fn account(id: &str, email: &str, first: &str, api_url: &str) -> StoredUserSettings {
++    StoredUserSettings {
++        profile: Some(StoredUserProfile {
++            id: id.to_string(),
++            first_name: Some(first.to_string()),
++            last_name: Some("User".to_string()),
++            email: Some(email.to_string()),
++        }),
++        api_url: Some(api_url.to_string()),
++        session: Some(StoredSession {
++            access_token: Some(format!("token-{id}")),
++            refresh_token: Some(format!("refresh-{id}")),
++            expires_at: Some(i64::MAX),
++            token_type: "Bearer".to_string(),
++            scope: None,
++            id_token: None,
++        }),
++        project: StoredProjectSettings {
++            active_project: Some(format!("project-{id}")),
++            ..Default::default()
++        },
++    }
++}
++
++fn auth_with(settings: CliSettings) -> (MeshAgentAuth, tempfile::TempDir) {
++    let temp = tempdir().expect("tempdir");
++    let auth = MeshAgentAuth::new(temp.path().join("settings.json"), None).expect("auth");
++    auth.store.save(&settings).expect("save settings");
++    (auth, temp)
++}
++
++fn two_accounts() -> CliSettings {
++    CliSettings {
++        active_user_id: Some("one".to_string()),
++        users: BTreeMap::from([
++            (
++                "one".to_string(),
++                account("one", "one@example.com", "One", "https://one/"),
++            ),
++            (
++                "two".to_string(),
++                account("two", "two@example.com", "Two", "https://two"),
++            ),
++        ]),
++    }
++}
++
++#[test]
++fn api_url_precedence_matches_meshagent_cli() {
++    let (mut auth, _temp) = auth_with(two_accounts());
++    assert_eq!(auth.resolved_api_url(None), "https://one");
++    auth.environment_api_url = Some("https://environment".to_string());
++    assert_eq!(auth.resolved_api_url(None), "https://environment");
++    assert_eq!(
++        auth.resolved_api_url(Some("https://explicit///")),
++        "https://explicit"
++    );
++}
++
++#[test]
++fn switches_accounts_by_id_email_and_display_name() {
++    let (auth, _temp) = auth_with(two_accounts());
++    assert_eq!(auth.switch_account("two").expect("id").user_id, "two");
++    assert_eq!(
++        auth.switch_account("one@example.com")
++            .expect("email")
++            .user_id,
++        "one"
++    );
++    assert_eq!(
++        auth.switch_account("Two User").expect("name").user_id,
++        "two"
++    );
++}
++
++#[test]
++fn logout_clears_only_the_active_session() {
++    let (auth, _temp) = auth_with(two_accounts());
++    assert_eq!(auth.logout().expect("logout"), true);
++    let settings = auth.store.load().expect("settings").expect("settings");
++    assert!(
++        settings
++            .users
++            .get("one")
++            .expect("active account")
++            .session
++            .is_none()
++    );
++    assert!(
++        settings
++            .users
++            .get("two")
++            .expect("other account")
++            .session
++            .is_some()
++    );
++    let switchable = auth.accounts().expect("accounts");
++    assert_eq!(switchable.len(), 1);
++    assert_eq!(switchable[0].user_id, "two");
++}
++
++#[test]
++fn login_migrates_local_project_settings_and_preserves_saved_accounts() {
++    let mut settings = two_accounts();
++    settings.active_user_id = Some(storage::LOCAL_STATE_USER_ID.to_string());
++    settings.users.insert(
++        storage::LOCAL_STATE_USER_ID.to_string(),
++        StoredUserSettings {
++            project: StoredProjectSettings {
++                active_project: Some("project-local".to_string()),
++                active_api_keys: BTreeMap::from([(
++                    "project-local".to_string(),
++                    "key-local".to_string(),
++                )]),
++                llm_proxy_bearer_token: Some("proxy-local".to_string()),
++            },
++            ..Default::default()
++        },
++    );
++    let (auth, _temp) = auth_with(settings);
++
++    let logged_in = auth
++        .store
++        .save_session(
++            StoredUserProfile {
++                id: "three".to_string(),
++                first_name: Some("Three".to_string()),
++                last_name: Some("User".to_string()),
++                email: Some("three@example.com".to_string()),
++            },
++            "https://three".to_string(),
++            account("three", "three@example.com", "Three", "https://three")
++                .session
++                .expect("session"),
++            &["project-local".to_string(), "project-other".to_string()],
++        )
++        .expect("save session");
++
++    assert_eq!(logged_in.user_id, "three");
++    assert_eq!(logged_in.active_project.as_deref(), Some("project-local"));
++    let persisted = auth.store.load().expect("settings").expect("settings");
++    assert!(!persisted.users.contains_key(storage::LOCAL_STATE_USER_ID));
++    assert!(persisted.users.contains_key("one"));
++    assert!(persisted.users.contains_key("two"));
++    let project = &persisted.users.get("three").expect("new account").project;
++    assert_eq!(
++        project
++            .active_api_keys
++            .get("project-local")
++            .map(String::as_str),
++        Some("key-local")
++    );
++    assert_eq!(
++        project.llm_proxy_bearer_token.as_deref(),
++        Some("proxy-local")
++    );
++}
++
++#[tokio::test]
++async fn lists_and_activates_projects_for_active_account() {
++    let server = MockServer::start().await;
++    let mut settings = two_accounts();
++    settings.users.get_mut("one").expect("account").api_url = Some(server.uri());
++    Mock::given(method("GET"))
++        .and(path("/accounts/projects"))
++        .and(header("authorization", "Bearer token-one"))
++        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
++            "projects": [
++                {"id": "project-one", "name": "One", "project_key": "one"},
++                {"id": "project-two", "name": "Two", "project_key": "two"}
++            ]
++        })))
++        .expect(2)
++        .mount(&server)
++        .await;
++    let (auth, _temp) = auth_with(settings);
++
++    let projects = auth.projects().await.expect("list projects");
++    assert_eq!(projects.len(), 2);
++    let activated = auth.activate_project("two").await.expect("activate by key");
++    assert_eq!(activated.id, "project-two");
++    assert_eq!(
++        auth.active_account()
++            .expect("active account")
++            .expect("account")
++            .active_project
++            .as_deref(),
++        Some("project-two")
++    );
++}
++
++#[tokio::test]
++async fn refreshes_and_persists_rotated_session_tokens() {
++    let server = MockServer::start().await;
++    let mut settings = two_accounts();
++    let user = settings.users.get_mut("one").expect("account");
++    user.api_url = Some("https://saved.invalid".to_string());
++    user.session.as_mut().expect("session").expires_at = Some(0);
++    Mock::given(method("POST"))
++        .and(path("/oauth/token"))
++        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
++            "access_token": "rotated-access",
++            "refresh_token": "rotated-refresh",
++            "token_type": "Bearer",
++            "expires_in": 3600
++        })))
++        .expect(1)
++        .mount(&server)
++        .await;
++    let temp = tempdir().expect("tempdir");
++    let auth =
++        MeshAgentAuth::new(temp.path().join("settings.json"), Some(server.uri())).expect("auth");
++    auth.store.save(&settings).expect("save settings");
++
++    assert_eq!(
++        auth.access_token(false).await.expect("refresh token"),
++        "rotated-access"
++    );
++    let (_, user) = auth
++        .store
++        .active_user()
++        .expect("settings")
++        .expect("active user");
++    let session = user.session.expect("persisted session");
++    assert_eq!(session.access_token.as_deref(), Some("rotated-access"));
++    assert_eq!(session.refresh_token.as_deref(), Some("rotated-refresh"));
++}
++
++#[tokio::test]
++async fn external_auth_refresh_forces_rotation_after_unauthorized() {
++    let server = MockServer::start().await;
++    let mut settings = two_accounts();
++    settings.users.get_mut("one").expect("account").api_url = Some(server.uri());
++    Mock::given(method("POST"))
++        .and(path("/oauth/token"))
++        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
++            "access_token": "unauthorized-recovery-access",
++            "refresh_token": "unauthorized-recovery-refresh",
++            "token_type": "Bearer",
++            "expires_in": 3600
++        })))
++        .expect(1)
++        .mount(&server)
++        .await;
++    let (auth, _temp) = auth_with(settings);
++
++    let refreshed = ExternalAuth::refresh(
++        &auth,
++        ExternalAuthRefreshContext {
++            reason: crate::ExternalAuthRefreshReason::Unauthorized,
++            previous_account_id: None,
++        },
++    )
++    .await
++    .expect("forced external refresh");
++
++    assert_eq!(
++        refreshed,
++        CodexAuth::from_api_key("unauthorized-recovery-access")
++    );
++    let (_, user) = auth
++        .store
++        .active_user()
++        .expect("settings")
++        .expect("active user");
++    assert_eq!(
++        user.session
++            .expect("persisted session")
++            .refresh_token
++            .as_deref(),
++        Some("unauthorized-recovery-refresh")
++    );
++}
++
++#[test]
++#[serial_test::serial]
++fn login_authorization_url_uses_pkce_state_and_api_override() {
++    let (auth, _temp) = auth_with(two_accounts());
++    let attempt = auth
++        .start_login(Some("https://login.example.test/"))
++        .expect("start login");
++    let url = url::Url::parse(&attempt.auth_url).expect("auth URL");
++    let query = url.query_pairs().collect::<BTreeMap<_, _>>();
++
++    assert_eq!(
++        url.as_str().split('?').next(),
++        Some("https://login.example.test/oauth/authorize")
++    );
++    assert_eq!(
++        query
++            .get("code_challenge_method")
++            .map(std::convert::AsRef::as_ref),
++        Some("S256")
++    );
++    assert!(
++        query
++            .get("code_challenge")
++            .is_some_and(|value| !value.is_empty())
++    );
++    assert!(query.get("state").is_some_and(|value| !value.is_empty()));
++    assert_eq!(
++        query.get("redirect_uri").map(std::convert::AsRef::as_ref),
++        Some("http://localhost:8765/callback")
++    );
++}
+diff --git a/codex-rs/login/src/meshagent/mod.rs b/codex-rs/login/src/meshagent/mod.rs
+new file mode 100644
+index 0000000..530186e
+--- /dev/null
++++ b/codex-rs/login/src/meshagent/mod.rs
+@@ -0,0 +1,184 @@
++//! MeshAgent OAuth and multi-account session storage.
++
++mod oauth;
++mod storage;
++
++pub use oauth::MeshAgentLoginAttempt;
++pub use oauth::MeshAgentLoginCancel;
++pub use oauth::MeshAgentLoginResult;
++pub use oauth::MeshAgentProject;
++pub use storage::MeshAgentAccount;
++
++use codex_http_client::ClientRouteClass;
++use codex_http_client::HttpClient;
++use codex_http_client::HttpClientFactory;
++use codex_http_client::OutboundProxyPolicy;
++use std::io;
++use std::path::PathBuf;
++
++use crate::CodexAuth;
++use crate::ExternalAuth;
++use crate::ExternalAuthFuture;
++use crate::ExternalAuthRefreshContext;
++use oauth::session_needs_refresh;
++use storage::SettingsStore;
++use storage::normalize_api_url;
++
++pub const DEFAULT_API_URL: &str = "https://api.meshagent.com";
++
++#[derive(Debug, Clone)]
++pub struct MeshAgentAuth {
++    store: SettingsStore,
++    environment_api_url: Option<String>,
++    client: HttpClient,
++}
++
++impl ExternalAuth for MeshAgentAuth {
++    fn resolve(&self) -> ExternalAuthFuture<'_, CodexAuth> {
++        Box::pin(async move {
++            self.access_token(/*force_refresh*/ false)
++                .await
++                .map(|token| CodexAuth::from_api_key(&token))
++        })
++    }
++
++    fn refresh(&self, _context: ExternalAuthRefreshContext) -> ExternalAuthFuture<'_, CodexAuth> {
++        Box::pin(async move {
++            self.access_token(/*force_refresh*/ true)
++                .await
++                .map(|token| CodexAuth::from_api_key(&token))
++        })
++    }
++}
++
++impl MeshAgentAuth {
++    pub fn from_environment() -> io::Result<Self> {
++        let home = std::env::var_os("HOME")
++            .map(PathBuf::from)
++            .ok_or_else(|| io::Error::other("HOME is not set"))?;
++        Self::new(
++            home.join(".meshagent/settings.json"),
++            normalize_api_url(std::env::var("MESHAGENT_API_URL").ok().as_deref()),
++        )
++    }
++
++    fn new(settings_path: PathBuf, environment_api_url: Option<String>) -> io::Result<Self> {
++        let client = HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault)
++            .build_client(DEFAULT_API_URL, ClientRouteClass::Auth)
++            .map_err(|error| io::Error::other(error.to_string()))?;
++        Ok(Self {
++            store: SettingsStore::new(settings_path),
++            environment_api_url,
++            client,
++        })
++    }
++
++    pub fn resolved_api_url(&self, explicit_api_url: Option<&str>) -> String {
++        normalize_api_url(explicit_api_url)
++            .or_else(|| self.environment_api_url.clone())
++            .or_else(|| {
++                self.store
++                    .active_user()
++                    .ok()
++                    .flatten()
++                    .and_then(|(_, user)| normalize_api_url(user.api_url.as_deref()))
++            })
++            .unwrap_or_else(|| DEFAULT_API_URL.to_string())
++    }
++
++    pub fn accounts(&self) -> io::Result<Vec<MeshAgentAccount>> {
++        self.store.accounts(DEFAULT_API_URL)
++    }
++
++    pub fn active_account(&self) -> io::Result<Option<MeshAgentAccount>> {
++        self.store.active_account(DEFAULT_API_URL)
++    }
++
++    pub fn switch_account(&self, selector: &str) -> io::Result<MeshAgentAccount> {
++        self.store.switch_account(selector, DEFAULT_API_URL)
++    }
++
++    pub fn logout(&self) -> io::Result<bool> {
++        self.store.logout()
++    }
++
++    pub fn set_active_project(&self, project_id: &str) -> io::Result<()> {
++        self.store.set_active_project(project_id)
++    }
++
++    pub async fn access_token(&self, force_refresh: bool) -> io::Result<String> {
++        if self
++            .store
++            .active_user()?
++            .is_none_or(|(_, user)| user.project.active_project.is_none())
++        {
++            return Err(io::Error::other(
++                "no active MeshAgent project; run `codex project activate`",
++            ));
++        }
++        self.session_access_token(force_refresh).await
++    }
++
++    async fn session_access_token(&self, force_refresh: bool) -> io::Result<String> {
++        let (user_id, user) = self
++            .store
++            .active_user()?
++            .ok_or_else(|| io::Error::other("not logged in to MeshAgent"))?;
++        let session = user
++            .session
++            .ok_or_else(|| io::Error::other("not logged in to MeshAgent"))?;
++        if !force_refresh && !session_needs_refresh(&session) {
++            return session
++                .access_token
++                .filter(|token| !token.is_empty())
++                .ok_or_else(|| io::Error::other("MeshAgent access token is missing"));
++        }
++        let api_url = self.resolved_api_url(None);
++        let refreshed = self.refresh_session(&session, &api_url).await?;
++        let access_token = refreshed
++            .access_token
++            .clone()
++            .ok_or_else(|| io::Error::other("MeshAgent token refresh returned no access token"))?;
++        self.store.replace_session(&user_id, refreshed)?;
++        Ok(access_token)
++    }
++
++    pub async fn activate_project(&self, selector: &str) -> io::Result<MeshAgentProject> {
++        let selector = selector.trim();
++        let projects = self.projects().await?;
++        let exact_id = projects.iter().find(|project| project.id == selector);
++        let project = if let Some(project) = exact_id {
++            project.clone()
++        } else {
++            let matches = projects
++                .iter()
++                .filter(|project| {
++                    project.name.eq_ignore_ascii_case(selector)
++                        || project
++                            .project_key
++                            .as_deref()
++                            .is_some_and(|key| key.eq_ignore_ascii_case(selector))
++                })
++                .collect::<Vec<_>>();
++            match matches.as_slice() {
++                [project] => (*project).clone(),
++                [] => {
++                    return Err(io::Error::other(format!(
++                        "no MeshAgent project matches `{selector}`"
++                    )));
++                }
++                _ => {
++                    return Err(io::Error::other(format!(
++                        "MeshAgent project selector `{selector}` is ambiguous"
++                    )));
++                }
++            }
++        };
++        self.set_active_project(&project.id)?;
++        Ok(project)
++    }
++}
++
++#[cfg(test)]
++#[path = "meshagent_tests.rs"]
++mod tests;
+diff --git a/codex-rs/login/src/meshagent/oauth.rs b/codex-rs/login/src/meshagent/oauth.rs
+new file mode 100644
+index 0000000..36c9d04
+--- /dev/null
++++ b/codex-rs/login/src/meshagent/oauth.rs
+@@ -0,0 +1,454 @@
++use super::MeshAgentAuth;
++use super::storage::MeshAgentAccount;
++use super::storage::StoredSession;
++use super::storage::StoredUserProfile;
++use base64::Engine;
++use base64::engine::general_purpose::URL_SAFE_NO_PAD;
++use rand::RngCore;
++use serde::Deserialize;
++use sha2::Digest;
++use sha2::Sha256;
++use std::collections::BTreeMap;
++use std::io;
++use std::sync::Arc;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::Ordering;
++use std::time::Duration;
++use std::time::SystemTime;
++use std::time::UNIX_EPOCH;
++use tiny_http::Response;
++use tiny_http::Server;
++use url::Url;
++
++const DEFAULT_OAUTH_CLIENT_ID: &str = "p8xy1ZUi73jJUJbNfTg92HUSDpCSZJcc";
++const REDIRECT_URL: &str = "http://localhost:8765/callback";
++const FULL_OAUTH_SCOPE: &str = "profile:read profile:write project/* room/* users:create users:read users:update users:delete projects:read projects:update projects:iam.read projects:iam.write projects:billing.read projects:billing.write rooms:create rooms:read rooms:connect rooms:update rooms:delete agents:create agents:read agents:update agents:delete agents:run agents:sessions.read mailboxes:create mailboxes:read mailboxes:update mailboxes:delete routes:create routes:read routes:update routes:delete scheduledTasks:create scheduledTasks:read scheduledTasks:update scheduledTasks:delete services:create services:read services:update services:delete repositories:create repositories:read repositories:update repositories:delete apiKeys:create apiKeys:read apiKeys:delete serviceAccounts:create serviceAccounts:read serviceAccounts:update serviceAccounts:delete oauthClients:create oauthClients:read oauthClients:update oauthClients:delete llm:invoke llm:usage.read llm:logs.read llm:logs.write secrets:read secrets:write secrets:delete secrets:grant secrets:proxy";
++
++#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
++pub struct MeshAgentProject {
++    pub id: String,
++    pub name: String,
++    #[serde(default)]
++    pub project_key: Option<String>,
++}
++
++#[derive(Debug)]
++pub struct MeshAgentLoginResult {
++    pub account: MeshAgentAccount,
++    pub projects: Vec<MeshAgentProject>,
++}
++
++pub struct MeshAgentLoginAttempt {
++    pub auth_url: String,
++    api_url: String,
++    code_verifier: String,
++    expected_state: String,
++    server: Server,
++    auth: MeshAgentAuth,
++    canceled: Arc<AtomicBool>,
++}
++
++#[derive(Debug, Clone)]
++pub struct MeshAgentLoginCancel {
++    canceled: Arc<AtomicBool>,
++}
++
++impl MeshAgentLoginCancel {
++    pub fn cancel(&self) {
++        self.canceled.store(true, Ordering::Release);
++    }
++}
++
++#[derive(Debug, Deserialize)]
++struct OAuthTokenResponse {
++    access_token: String,
++    #[serde(default)]
++    refresh_token: Option<String>,
++    #[serde(default = "default_token_type")]
++    token_type: String,
++    #[serde(default)]
++    expires_in: Option<i64>,
++    #[serde(default)]
++    scope: Option<String>,
++    #[serde(default)]
++    id_token: Option<String>,
++}
++
++#[derive(Debug, Deserialize)]
++struct ProfileResponse {
++    id: String,
++    #[serde(default)]
++    first_name: Option<String>,
++    #[serde(default)]
++    last_name: Option<String>,
++    #[serde(default)]
++    email: Option<String>,
++}
++
++#[derive(Debug, Deserialize)]
++struct ProjectsResponse {
++    #[serde(default)]
++    projects: Vec<MeshAgentProject>,
++}
++
++impl MeshAgentAuth {
++    pub async fn projects(&self) -> io::Result<Vec<MeshAgentProject>> {
++        let token = self.session_access_token(/*force_refresh*/ false).await?;
++        let api_url = self.resolved_api_url(None);
++        let response = self
++            .client
++            .get(format!("{api_url}/accounts/projects"))
++            .bearer_auth(&token)
++            .send()
++            .await
++            .map_err(|error| io::Error::other(error.to_string()))?;
++        let projects: ProjectsResponse =
++            parse_json_response(response, "MeshAgent projects").await?;
++        Ok(projects.projects)
++    }
++
++    pub fn start_login(&self, explicit_api_url: Option<&str>) -> io::Result<MeshAgentLoginAttempt> {
++        let api_url = self.resolved_api_url(explicit_api_url);
++        let code_verifier = random_base64url(32);
++        let code_challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()));
++        let expected_state = random_base64url(16);
++        let client_id = oauth_client_id()?;
++        let scopes = oauth_scopes();
++        let mut auth_url = Url::parse(&format!("{api_url}/oauth/authorize"))
++            .map_err(|error| io::Error::other(error.to_string()))?;
++        auth_url.query_pairs_mut().extend_pairs([
++            ("response_type", "code"),
++            ("client_id", client_id.as_str()),
++            ("redirect_uri", REDIRECT_URL),
++            ("scope", scopes.as_str()),
++            ("code_challenge", code_challenge.as_str()),
++            ("code_challenge_method", "S256"),
++            ("state", expected_state.as_str()),
++        ]);
++        let server =
++            Server::http("127.0.0.1:8765").map_err(|error| io::Error::other(error.to_string()))?;
++        let canceled = Arc::new(AtomicBool::new(false));
++        Ok(MeshAgentLoginAttempt {
++            auth_url: auth_url.to_string(),
++            api_url,
++            code_verifier,
++            expected_state,
++            server,
++            auth: self.clone(),
++            canceled,
++        })
++    }
++
++    pub(super) async fn refresh_session(
++        &self,
++        session: &StoredSession,
++        api_url: &str,
++    ) -> io::Result<StoredSession> {
++        let refresh_token = session
++            .refresh_token
++            .as_deref()
++            .filter(|token| !token.is_empty())
++            .ok_or_else(|| io::Error::other("no MeshAgent refresh token is available"))?;
++        let mut fields = vec![
++            ("grant_type", "refresh_token".to_string()),
++            ("refresh_token", refresh_token.to_string()),
++            ("client_id", oauth_client_id()?),
++        ];
++        if let Some(client_secret) = oauth_client_secret() {
++            fields.push(("client_secret", client_secret));
++        }
++        let response = self
++            .post_form(&format!("{api_url}/oauth/token"), &fields)
++            .await?;
++        let token: OAuthTokenResponse =
++            parse_json_response(response, "MeshAgent token refresh").await?;
++        stored_session(token, Some(refresh_token))
++    }
++
++    async fn post_form(
++        &self,
++        url: &str,
++        fields: &[(&str, String)],
++    ) -> io::Result<codex_http_client::HttpResponse> {
++        let body = url::form_urlencoded::Serializer::new(String::new())
++            .extend_pairs(fields.iter().map(|(key, value)| (*key, value.as_str())))
++            .finish();
++        self.client
++            .post(url)
++            .header("accept", "application/json")
++            .header("content-type", "application/x-www-form-urlencoded")
++            .body(body)
++            .send()
++            .await
++            .map_err(|error| io::Error::other(error.to_string()))
++    }
++}
++
++impl MeshAgentLoginAttempt {
++    pub fn open_browser(&self) -> io::Result<()> {
++        webbrowser::open(&self.auth_url)
++            .map(|_| ())
++            .map_err(|error| io::Error::other(error.to_string()))
++    }
++
++    pub fn cancel_handle(&self) -> MeshAgentLoginCancel {
++        MeshAgentLoginCancel {
++            canceled: Arc::clone(&self.canceled),
++        }
++    }
++
++    pub async fn complete(self) -> io::Result<MeshAgentLoginResult> {
++        let expected_state = self.expected_state.clone();
++        let server = self.server;
++        let canceled = Arc::clone(&self.canceled);
++        let code =
++            tokio::task::spawn_blocking(move || wait_for_code(server, &expected_state, &canceled))
++                .await
++                .map_err(|error| io::Error::other(error.to_string()))??;
++        let mut fields = vec![
++            ("grant_type", "authorization_code".to_string()),
++            ("code", code),
++            ("redirect_uri", REDIRECT_URL.to_string()),
++            ("client_id", oauth_client_id()?),
++            ("code_verifier", self.code_verifier),
++        ];
++        if let Some(client_secret) = oauth_client_secret() {
++            fields.push(("client_secret", client_secret));
++        }
++        let response = self
++            .auth
++            .post_form(&format!("{}/oauth/token", self.api_url), &fields)
++            .await?;
++        let token: OAuthTokenResponse = parse_json_response(response, "MeshAgent login").await?;
++        let session = stored_session(token, /*existing_refresh_token*/ None)?;
++        let access_token = session
++            .access_token
++            .as_deref()
++            .ok_or_else(|| io::Error::other("MeshAgent login returned no access token"))?;
++        let profile_response = self
++            .auth
++            .client
++            .get(format!("{}/accounts/profiles/me", self.api_url))
++            .bearer_auth(access_token)
++            .send()
++            .await
++            .map_err(|error| io::Error::other(error.to_string()))?;
++        let profile: ProfileResponse =
++            parse_json_response(profile_response, "MeshAgent profile").await?;
++        let projects_response = self
++            .auth
++            .client
++            .get(format!("{}/accounts/projects", self.api_url))
++            .bearer_auth(access_token)
++            .send()
++            .await
++            .map_err(|error| io::Error::other(error.to_string()))?;
++        let projects: ProjectsResponse =
++            parse_json_response(projects_response, "MeshAgent projects").await?;
++        let project_ids = projects
++            .projects
++            .iter()
++            .map(|project| project.id.clone())
++            .collect::<Vec<_>>();
++        let account = self.auth.store.save_session(
++            StoredUserProfile {
++                id: profile.id,
++                first_name: profile.first_name,
++                last_name: profile.last_name,
++                email: profile.email,
++            },
++            self.api_url,
++            session,
++            &project_ids,
++        )?;
++        Ok(MeshAgentLoginResult {
++            account,
++            projects: projects.projects,
++        })
++    }
++}
++
++async fn parse_json_response<T: for<'de> Deserialize<'de>>(
++    response: codex_http_client::HttpResponse,
++    operation: &str,
++) -> io::Result<T> {
++    let status = response.status();
++    let body = response
++        .text()
++        .await
++        .map_err(|error| io::Error::other(error.to_string()))?;
++    if !status.is_success() {
++        return Err(io::Error::other(format!(
++            "{operation} failed with HTTP {}: {body}",
++            status.as_u16()
++        )));
++    }
++    serde_json::from_str(&body).map_err(|error| io::Error::other(error.to_string()))
++}
++
++fn wait_for_code(
++    server: Server,
++    expected_state: &str,
++    canceled: &AtomicBool,
++) -> io::Result<String> {
++    loop {
++        if canceled.load(Ordering::Acquire) {
++            return Err(io::Error::new(
++                io::ErrorKind::Interrupted,
++                "MeshAgent login canceled",
++            ));
++        }
++        let request = server
++            .recv_timeout(Duration::from_millis(100))
++            .map_err(|error| io::Error::other(error.to_string()))?;
++        let Some(request) = request else {
++            continue;
++        };
++        let callback_url = Url::parse(&format!("http://localhost{}", request.url()))
++            .map_err(|error| io::Error::other(error.to_string()))?;
++        let params = callback_url
++            .query_pairs()
++            .map(|(key, value)| (key.into_owned(), value.into_owned()))
++            .collect::<BTreeMap<_, _>>();
++        let code = match validate_callback_params(&params, expected_state) {
++            Ok(code) => code,
++            Err(CallbackValidationError::StateMismatch) => {
++                let _ = request.respond(
++                    Response::from_string("State mismatch. Close this tab.").with_status_code(400),
++                );
++                continue;
++            }
++            Err(CallbackValidationError::MissingCode) => {
++                let _ =
++                    request.respond(Response::from_string("Missing 'code'.").with_status_code(400));
++                continue;
++            }
++        };
++        request
++            .respond(Response::from_string("You may close this tab."))
++            .map_err(|error| io::Error::other(error.to_string()))?;
++        return Ok(code);
++    }
++}
++
++#[derive(Debug, PartialEq, Eq)]
++enum CallbackValidationError {
++    StateMismatch,
++    MissingCode,
++}
++
++fn validate_callback_params(
++    params: &BTreeMap<String, String>,
++    expected_state: &str,
++) -> Result<String, CallbackValidationError> {
++    if params.get("state").map(String::as_str) != Some(expected_state) {
++        return Err(CallbackValidationError::StateMismatch);
++    }
++    params
++        .get("code")
++        .filter(|code| !code.is_empty())
++        .cloned()
++        .ok_or(CallbackValidationError::MissingCode)
++}
++
++fn stored_session(
++    response: OAuthTokenResponse,
++    existing_refresh_token: Option<&str>,
++) -> io::Result<StoredSession> {
++    let expires_in = response.expires_in.unwrap_or(3600);
++    Ok(StoredSession {
++        access_token: Some(response.access_token),
++        refresh_token: response
++            .refresh_token
++            .or_else(|| existing_refresh_token.map(str::to_string)),
++        expires_at: Some(current_timestamp()? + (expires_in - 30).max(0)),
++        token_type: response.token_type,
++        scope: response.scope,
++        id_token: response.id_token,
++    })
++}
++
++pub(super) fn session_needs_refresh(session: &StoredSession) -> bool {
++    session
++        .expires_at
++        .is_none_or(|expires_at| expires_at <= current_timestamp().unwrap_or(0) + 5 * 60)
++}
++
++fn current_timestamp() -> io::Result<i64> {
++    let seconds = SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .map_err(|error| io::Error::other(error.to_string()))?
++        .as_secs();
++    i64::try_from(seconds).map_err(|error| io::Error::other(error.to_string()))
++}
++
++fn random_base64url(length: usize) -> String {
++    let mut bytes = vec![0_u8; length];
++    rand::rng().fill_bytes(&mut bytes);
++    URL_SAFE_NO_PAD.encode(bytes)
++}
++
++fn oauth_client_id() -> io::Result<String> {
++    match std::env::var("MESHAGENT_OAUTH_CLIENT_ID") {
++        Ok(value) if value.is_empty() => {
++            Err(io::Error::other("MESHAGENT_OAUTH_CLIENT_ID is not set"))
++        }
++        Ok(value) => Ok(value),
++        Err(_) => Ok(DEFAULT_OAUTH_CLIENT_ID.to_string()),
++    }
++}
++
++fn oauth_client_secret() -> Option<String> {
++    std::env::var("MESHAGENT_OAUTH_CLIENT_SECRET").ok()
++}
++
++fn oauth_scopes() -> String {
++    std::env::var("MESHAGENT_OAUTH_SCOPES").unwrap_or_else(|_| FULL_OAUTH_SCOPE.to_string())
++}
++
++fn default_token_type() -> String {
++    "Bearer".to_string()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::CallbackValidationError;
++    use super::validate_callback_params;
++    use std::collections::BTreeMap;
++
++    #[test]
++    fn callback_requires_matching_oauth_state() {
++        let params = BTreeMap::from([
++            ("code".to_string(), "authorization-code".to_string()),
++            ("state".to_string(), "unexpected".to_string()),
++        ]);
++
++        assert_eq!(
++            validate_callback_params(&params, "expected"),
++            Err(CallbackValidationError::StateMismatch)
++        );
++    }
++
++    #[test]
++    fn callback_requires_nonempty_authorization_code() {
++        let params = BTreeMap::from([("state".to_string(), "expected".to_string())]);
++
++        assert_eq!(
++            validate_callback_params(&params, "expected"),
++            Err(CallbackValidationError::MissingCode)
++        );
++    }
++
++    #[test]
++    fn callback_returns_code_for_matching_state() {
++        let params = BTreeMap::from([
++            ("code".to_string(), "authorization-code".to_string()),
++            ("state".to_string(), "expected".to_string()),
++        ]);
++
++        assert_eq!(
++            validate_callback_params(&params, "expected"),
++            Ok("authorization-code".to_string())
++        );
++    }
++}
+diff --git a/codex-rs/login/src/meshagent/storage.rs b/codex-rs/login/src/meshagent/storage.rs
+new file mode 100644
+index 0000000..0b2ef91
+--- /dev/null
++++ b/codex-rs/login/src/meshagent/storage.rs
+@@ -0,0 +1,424 @@
++use serde::Deserialize;
++use serde::Serialize;
++use std::collections::BTreeMap;
++use std::fs;
++use std::io;
++use std::io::Write;
++use std::path::PathBuf;
++
++pub(super) const LOCAL_STATE_USER_ID: &str = "__local__";
++
++#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
++pub(super) struct StoredSession {
++    #[serde(default)]
++    pub access_token: Option<String>,
++    #[serde(default)]
++    pub refresh_token: Option<String>,
++    #[serde(default)]
++    pub expires_at: Option<i64>,
++    #[serde(default = "default_token_type")]
++    pub token_type: String,
++    #[serde(default)]
++    pub scope: Option<String>,
++    #[serde(default)]
++    pub id_token: Option<String>,
++}
++
++#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
++pub(super) struct StoredProjectSettings {
++    #[serde(default)]
++    pub active_project: Option<String>,
++    #[serde(default)]
++    pub active_api_keys: BTreeMap<String, String>,
++    #[serde(default)]
++    pub llm_proxy_bearer_token: Option<String>,
++}
++
++#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
++pub(super) struct StoredUserProfile {
++    pub id: String,
++    #[serde(default)]
++    pub first_name: Option<String>,
++    #[serde(default)]
++    pub last_name: Option<String>,
++    #[serde(default)]
++    pub email: Option<String>,
++}
++
++#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
++pub(super) struct StoredUserSettings {
++    #[serde(default)]
++    pub profile: Option<StoredUserProfile>,
++    #[serde(default)]
++    pub api_url: Option<String>,
++    #[serde(default)]
++    pub session: Option<StoredSession>,
++    #[serde(default)]
++    pub project: StoredProjectSettings,
++}
++
++#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
++pub(super) struct CliSettings {
++    #[serde(default)]
++    pub active_user_id: Option<String>,
++    #[serde(default)]
++    pub users: BTreeMap<String, StoredUserSettings>,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct MeshAgentAccount {
++    pub user_id: String,
++    pub email: Option<String>,
++    pub display_name: Option<String>,
++    pub api_url: String,
++    pub active_project: Option<String>,
++    pub authenticated: bool,
++    pub active: bool,
++}
++
++#[derive(Debug, Clone)]
++pub(super) struct SettingsStore {
++    path: PathBuf,
++}
++
++impl SettingsStore {
++    pub fn new(path: PathBuf) -> Self {
++        Self { path }
++    }
++
++    pub fn load(&self) -> io::Result<Option<CliSettings>> {
++        if !self.path.exists() {
++            let migrated = self.migrate_legacy_settings()?;
++            if let Some(settings) = &migrated {
++                self.save(settings)?;
++            }
++            return Ok(migrated);
++        }
++        let text = fs::read_to_string(&self.path)?;
++        serde_json::from_str(&text)
++            .map(Some)
++            .map_err(|error| io::Error::other(error.to_string()))
++    }
++
++    fn migrate_legacy_settings(&self) -> io::Result<Option<CliSettings>> {
++        let Some(parent) = self.path.parent() else {
++            return Ok(None);
++        };
++        let session_path = parent.join("session.json");
++        let project_path = parent.join("project.json");
++        let session = read_optional_json::<StoredSession>(&session_path)?;
++        let project = read_optional_json::<StoredProjectSettings>(&project_path)?;
++        if session.is_none() && project.is_none() {
++            return Ok(None);
++        }
++        Ok(Some(CliSettings {
++            active_user_id: Some(LOCAL_STATE_USER_ID.to_string()),
++            users: BTreeMap::from([(
++                LOCAL_STATE_USER_ID.to_string(),
++                StoredUserSettings {
++                    profile: None,
++                    api_url: normalize_api_url(std::env::var("MESHAGENT_API_URL").ok().as_deref()),
++                    session,
++                    project: project.unwrap_or_default(),
++                },
++            )]),
++        }))
++    }
++
++    pub fn save(&self, settings: &CliSettings) -> io::Result<()> {
++        if let Some(parent) = self.path.parent() {
++            fs::create_dir_all(parent)?;
++        }
++        let text = serde_json::to_string_pretty(settings)
++            .map_err(|error| io::Error::other(error.to_string()))?;
++        let mut options = fs::OpenOptions::new();
++        options.create(true).truncate(true).write(true);
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::OpenOptionsExt;
++            options.mode(0o600);
++        }
++        let mut file = options.open(&self.path)?;
++        writeln!(file, "{text}")
++    }
++
++    pub fn accounts(&self, default_api_url: &str) -> io::Result<Vec<MeshAgentAccount>> {
++        let settings = self.load()?.unwrap_or_default();
++        let active = active_user_id(&settings).map(str::to_string);
++        let mut accounts = settings
++            .users
++            .iter()
++            .filter(|(id, user)| id.as_str() != LOCAL_STATE_USER_ID && is_switchable_user(user))
++            .map(|(id, user)| account_from_stored(id, user, active.as_deref(), default_api_url))
++            .collect::<Vec<_>>();
++        accounts.sort_by_key(|account| {
++            (
++                !account.active,
++                account
++                    .email
++                    .clone()
++                    .unwrap_or_else(|| account.user_id.clone()),
++            )
++        });
++        Ok(accounts)
++    }
++
++    pub fn active_account(&self, default_api_url: &str) -> io::Result<Option<MeshAgentAccount>> {
++        let settings = self.load()?.unwrap_or_default();
++        let Some(id) = active_user_id(&settings) else {
++            return Ok(None);
++        };
++        Ok(settings
++            .users
++            .get(id)
++            .map(|user| account_from_stored(id, user, Some(id), default_api_url)))
++    }
++
++    pub fn active_user(&self) -> io::Result<Option<(String, StoredUserSettings)>> {
++        let settings = self.load()?.unwrap_or_default();
++        let Some(id) = active_user_id(&settings) else {
++            return Ok(None);
++        };
++        Ok(settings
++            .users
++            .get(id)
++            .cloned()
++            .map(|user| (id.to_string(), user)))
++    }
++
++    pub fn switch_account(
++        &self,
++        selector: &str,
++        default_api_url: &str,
++    ) -> io::Result<MeshAgentAccount> {
++        let mut settings = self.load()?.unwrap_or_default();
++        let selector = selector.trim();
++        let matches = settings
++            .users
++            .iter()
++            .filter(|(id, user)| {
++                id.as_str() != LOCAL_STATE_USER_ID
++                    && is_switchable_user(user)
++                    && account_matches(id, user, selector)
++            })
++            .map(|(id, _)| id.clone())
++            .collect::<Vec<_>>();
++        let id = match matches.as_slice() {
++            [id] => id.clone(),
++            [] => {
++                return Err(io::Error::other(format!(
++                    "no MeshAgent account matches `{selector}`"
++                )));
++            }
++            _ => {
++                return Err(io::Error::other(format!(
++                    "MeshAgent account selector `{selector}` is ambiguous"
++                )));
++            }
++        };
++        settings.active_user_id = Some(id.clone());
++        self.save(&settings)?;
++        let user = settings
++            .users
++            .get(&id)
++            .ok_or_else(|| io::Error::other("selected MeshAgent account disappeared"))?;
++        Ok(account_from_stored(&id, user, Some(&id), default_api_url))
++    }
++
++    pub fn logout(&self) -> io::Result<bool> {
++        let Some(mut settings) = self.load()? else {
++            return Ok(false);
++        };
++        let Some(id) = active_user_id(&settings).map(str::to_string) else {
++            return Ok(false);
++        };
++        let Some(user) = settings.users.get_mut(&id) else {
++            return Ok(false);
++        };
++        let changed = user.session.take().is_some();
++        if changed {
++            self.save(&settings)?;
++        }
++        Ok(changed)
++    }
++
++    pub fn set_active_project(&self, project_id: &str) -> io::Result<()> {
++        let mut settings = self.load()?.unwrap_or_default();
++        let id = active_user_id(&settings)
++            .map(str::to_string)
++            .ok_or_else(|| io::Error::other("not logged in to MeshAgent"))?;
++        let user = settings
++            .users
++            .get_mut(&id)
++            .ok_or_else(|| io::Error::other("active MeshAgent account is missing"))?;
++        user.project.active_project = Some(project_id.to_string());
++        self.save(&settings)
++    }
++
++    pub fn save_session(
++        &self,
++        profile: StoredUserProfile,
++        api_url: String,
++        session: StoredSession,
++        project_ids: &[String],
++    ) -> io::Result<MeshAgentAccount> {
++        let mut settings = self.load()?.unwrap_or_default();
++        let id = profile.id.clone();
++        let mut prior = settings.users.remove(&id).unwrap_or_default();
++        if id != LOCAL_STATE_USER_ID
++            && let Some(local) = settings.users.remove(LOCAL_STATE_USER_ID)
++        {
++            prior.project = merge_project_settings(&local.project, &prior.project);
++        }
++        let active_project = prior
++            .project
++            .active_project
++            .clone()
++            .filter(|active| project_ids.contains(active))
++            .or_else(|| match project_ids {
++                [only] => Some(only.clone()),
++                _ => None,
++            });
++        settings.users.insert(
++            id.clone(),
++            StoredUserSettings {
++                profile: Some(profile),
++                api_url: Some(api_url.clone()),
++                session: Some(session),
++                project: StoredProjectSettings {
++                    active_project,
++                    ..prior.project
++                },
++            },
++        );
++        settings.active_user_id = Some(id.clone());
++        self.save(&settings)?;
++        let user = settings
++            .users
++            .get(&id)
++            .ok_or_else(|| io::Error::other("failed to save MeshAgent account"))?;
++        Ok(account_from_stored(&id, user, Some(&id), &api_url))
++    }
++
++    pub fn replace_session(&self, user_id: &str, session: StoredSession) -> io::Result<()> {
++        let mut settings = self.load()?.unwrap_or_default();
++        let user = settings
++            .users
++            .get_mut(user_id)
++            .ok_or_else(|| io::Error::other("active MeshAgent account is missing"))?;
++        user.session = Some(session);
++        self.save(&settings)
++    }
++}
++
++fn merge_project_settings(
++    source: &StoredProjectSettings,
++    target: &StoredProjectSettings,
++) -> StoredProjectSettings {
++    let mut active_api_keys = target.active_api_keys.clone();
++    active_api_keys.extend(source.active_api_keys.clone());
++    StoredProjectSettings {
++        active_project: source
++            .active_project
++            .clone()
++            .or_else(|| target.active_project.clone()),
++        active_api_keys,
++        llm_proxy_bearer_token: source
++            .llm_proxy_bearer_token
++            .clone()
++            .or_else(|| target.llm_proxy_bearer_token.clone()),
++    }
++}
++
++fn read_optional_json<T: for<'de> Deserialize<'de>>(
++    path: &std::path::Path,
++) -> io::Result<Option<T>> {
++    if !path.exists() {
++        return Ok(None);
++    }
++    let text = fs::read_to_string(path)?;
++    serde_json::from_str(&text)
++        .map(Some)
++        .map_err(|error| io::Error::other(error.to_string()))
++}
++
++fn active_user_id(settings: &CliSettings) -> Option<&str> {
++    if let Some(id) = settings.active_user_id.as_deref()
++        && settings.users.contains_key(id)
++    {
++        return Some(id);
++    }
++    if settings.users.contains_key(LOCAL_STATE_USER_ID) {
++        return Some(LOCAL_STATE_USER_ID);
++    }
++    if settings.users.len() == 1 {
++        return settings.users.keys().next().map(String::as_str);
++    }
++    None
++}
++
++fn account_matches(id: &str, user: &StoredUserSettings, selector: &str) -> bool {
++    if id.eq_ignore_ascii_case(selector) {
++        return true;
++    }
++    let account = account_from_stored(id, user, Some(id), "");
++    account
++        .email
++        .as_deref()
++        .is_some_and(|email| email.eq_ignore_ascii_case(selector))
++        || account
++            .display_name
++            .as_deref()
++            .is_some_and(|name| name.eq_ignore_ascii_case(selector))
++}
++
++fn is_switchable_user(user: &StoredUserSettings) -> bool {
++    user.profile.is_some()
++        && user
++            .session
++            .as_ref()
++            .and_then(|session| session.access_token.as_deref())
++            .is_some_and(|token| !token.is_empty())
++}
++
++fn account_from_stored(
++    id: &str,
++    user: &StoredUserSettings,
++    active_id: Option<&str>,
++    default_api_url: &str,
++) -> MeshAgentAccount {
++    let display_name = user.profile.as_ref().and_then(|profile| {
++        let name = [profile.first_name.as_deref(), profile.last_name.as_deref()]
++            .into_iter()
++            .flatten()
++            .collect::<Vec<_>>()
++            .join(" ");
++        (!name.is_empty()).then_some(name)
++    });
++    MeshAgentAccount {
++        user_id: id.to_string(),
++        email: user
++            .profile
++            .as_ref()
++            .and_then(|profile| profile.email.clone()),
++        display_name,
++        api_url: normalize_api_url(user.api_url.as_deref())
++            .unwrap_or_else(|| default_api_url.to_string()),
++        active_project: user.project.active_project.clone(),
++        authenticated: user
++            .session
++            .as_ref()
++            .and_then(|session| session.access_token.as_deref())
++            .is_some_and(|token| !token.is_empty()),
++        active: active_id == Some(id),
++    }
++}
++
++pub(super) fn normalize_api_url(value: Option<&str>) -> Option<String> {
++    let value = value?.trim().trim_end_matches('/');
++    (!value.is_empty()).then(|| value.to_string())
++}
++
++fn default_token_type() -> String {
++    "Bearer".to_string()
++}
+diff --git a/codex-rs/model-provider-info/src/lib.rs b/codex-rs/model-provider-info/src/lib.rs
+index 65e2e4c..00e52e1 100644
+--- a/codex-rs/model-provider-info/src/lib.rs
++++ b/codex-rs/model-provider-info/src/lib.rs
+@@ -38,6 +38,9 @@ const OPENAI_PROVIDER_NAME: &str = "OpenAI";
+ const OPENAI_ACTOR_AUTHORIZATION_HEADER: &str = "x-openai-actor-authorization";
+ pub const OPENAI_PROVIDER_ID: &str = "openai";
+ pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
++const MESHAGENT_PROVIDER_NAME: &str = "MeshAgent";
++pub const MESHAGENT_PROVIDER_ID: &str = "meshagent";
++pub const MESHAGENT_DEFAULT_BASE_URL: &str = "https://api.meshagent.com/openai/v1";
+ const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
+ pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
+ const AMAZON_BEDROCK_RUNTIME_PROVIDER_NAME: &str = "Amazon Bedrock Runtime";
+@@ -420,6 +423,29 @@ impl ModelProviderInfo {
+         }
+     }
+ 
++    pub fn create_meshagent_provider() -> ModelProviderInfo {
++        ModelProviderInfo {
++            name: MESHAGENT_PROVIDER_NAME.into(),
++            base_url: Some(MESHAGENT_DEFAULT_BASE_URL.to_string()),
++            env_key: None,
++            env_key_instructions: None,
++            experimental_bearer_token: None,
++            auth: None,
++            aws: None,
++            wire_api: WireApi::Responses,
++            query_params: None,
++            http_headers: None,
++            env_http_headers: None,
++            request_max_retries: None,
++            stream_max_retries: None,
++            stream_idle_timeout_ms: None,
++            websocket_connect_timeout_ms: None,
++            requires_openai_auth: false,
++            supports_websockets: false,
++            supports_standalone_web_search: true,
++        }
++    }
++
+     pub fn create_amazon_bedrock_provider(
+         aws: Option<ModelProviderAwsAuthInfo>,
+     ) -> ModelProviderInfo {
+@@ -468,6 +494,10 @@ impl ModelProviderInfo {
+         self.name == OPENAI_PROVIDER_NAME
+     }
+ 
++    pub fn is_meshagent(&self) -> bool {
++        self.name == MESHAGENT_PROVIDER_NAME
++    }
++
+     pub fn supports_codex_backend_routes(&self) -> bool {
+         self.is_openai()
+             && self.base_url.as_deref().is_none_or(|base_url| {
+@@ -513,6 +543,7 @@ pub fn built_in_model_providers(
+ ) -> HashMap<String, ModelProviderInfo> {
+     use ModelProviderInfo as P;
+     let openai_provider = P::create_openai_provider(openai_base_url);
++    let meshagent_provider = P::create_meshagent_provider();
+     let amazon_bedrock_provider = P::create_amazon_bedrock_provider(/*aws*/ None);
+     let amazon_bedrock_runtime_provider =
+         P::create_amazon_bedrock_runtime_provider(/*aws*/ None);
+@@ -523,6 +554,7 @@ pub fn built_in_model_providers(
+     // `model_providers` in config.toml to add their own providers.
+     [
+         (OPENAI_PROVIDER_ID, openai_provider),
++        (MESHAGENT_PROVIDER_ID, meshagent_provider),
+         (AMAZON_BEDROCK_PROVIDER_ID, amazon_bedrock_provider),
+         (
+             AMAZON_BEDROCK_RUNTIME_PROVIDER_ID,
+diff --git a/codex-rs/model-provider/src/auth.rs b/codex-rs/model-provider/src/auth.rs
+index f4d2764..2f8075a 100644
+--- a/codex-rs/model-provider/src/auth.rs
++++ b/codex-rs/model-provider/src/auth.rs
+@@ -188,6 +188,9 @@ pub(crate) fn auth_manager_for_provider(
+     auth_manager: Option<Arc<AuthManager>>,
+     provider: &ModelProviderInfo,
+ ) -> Option<Arc<AuthManager>> {
++    if provider.is_meshagent() {
++        return AuthManager::meshagent_only().ok();
++    }
+     match provider.auth.clone() {
+         Some(config) => Some(AuthManager::external_bearer_only(config)),
+         None => auth_manager,
+@@ -202,7 +205,7 @@ pub(crate) fn resolve_provider_auth(
+         return Ok(Arc::new(auth));
+     }
+ 
+-    if !provider.requires_openai_auth && provider.auth.is_none() {
++    if !provider.requires_openai_auth && provider.auth.is_none() && !provider.is_meshagent() {
+         return Ok(unauthenticated_auth_provider());
+     }
+ 
+diff --git a/codex-rs/model-provider/src/models_endpoint.rs b/codex-rs/model-provider/src/models_endpoint.rs
+index 4ccb5b7..18e14a6 100644
+--- a/codex-rs/model-provider/src/models_endpoint.rs
++++ b/codex-rs/model-provider/src/models_endpoint.rs
+@@ -35,6 +35,7 @@ use tokio::time::timeout;
+ use crate::auth::agent_identity_telemetry;
+ use crate::auth::resolve_provider_auth;
+ use crate::provider::enforce_managed_residency;
++use crate::provider::runtime_provider_info;
+ 
+ const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
+ const MODELS_ENDPOINT: &str = "/models";
+@@ -82,9 +83,10 @@ impl OpenAiModelsEndpoint {
+             codex_otel::start_global_timer("codex.remote_models.fetch_update.duration_ms", &[]);
+         let auth = self.auth().await;
+         let auth_mode = auth.as_ref().map(CodexAuth::auth_mode);
+-        let mut api_provider = self.provider_info.to_api_provider(auth_mode)?;
++        let provider_info = runtime_provider_info(self.provider_info.clone())?;
++        let mut api_provider = provider_info.to_api_provider(auth_mode)?;
+         enforce_managed_residency(&mut api_provider);
+-        let api_auth = resolve_provider_auth(auth.as_ref(), &self.provider_info)?;
++        let api_auth = resolve_provider_auth(auth.as_ref(), &provider_info)?;
+         let request_url =
+             ModelsClient::<ReqwestTransport>::request_url(&api_provider, client_version);
+         let auth_telemetry = auth_header_telemetry(api_auth.as_ref());
+@@ -130,6 +132,10 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
+         self.provider_info.has_command_auth()
+     }
+ 
++    fn has_provider_remote_catalog(&self) -> bool {
++        self.provider_info.is_meshagent()
++    }
++
+     fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool> {
+         Box::pin(OpenAiModelsEndpoint::uses_codex_backend(self))
+     }
+diff --git a/codex-rs/model-provider/src/provider.rs b/codex-rs/model-provider/src/provider.rs
+index 198cd63..4ad1242 100644
+--- a/codex-rs/model-provider/src/provider.rs
++++ b/codex-rs/model-provider/src/provider.rs
+@@ -14,6 +14,7 @@ use codex_login::CodexAuth;
+ use codex_login::default_client::RESIDENCY_HEADER_NAME;
+ use codex_login::default_client::ResidencyRequirement;
+ use codex_login::default_client::read_default_client_residency_requirement;
++use codex_login::meshagent::MeshAgentAuth;
+ use codex_model_provider_info::ModelProviderInfo;
+ use codex_models_manager::cache::ModelsCache;
+ use codex_models_manager::manager::OpenAiModelsManager;
+@@ -343,6 +344,53 @@ impl ConfiguredModelProvider {
+             auth_manager,
+         }
+     }
++
++    fn runtime_info(&self) -> codex_protocol::error::Result<ModelProviderInfo> {
++        runtime_provider_info(self.info.clone())
++    }
++}
++
++pub(crate) fn runtime_provider_info(
++    info: ModelProviderInfo,
++) -> codex_protocol::error::Result<ModelProviderInfo> {
++    if !info.is_meshagent() {
++        return Ok(info);
++    }
++    let auth = MeshAgentAuth::from_environment().map_err(|error| {
++        CodexErr::UnsupportedOperation(format!("could not load MeshAgent authentication: {error}"))
++    })?;
++    let api_url = auth.resolved_api_url(None);
++    let account = auth
++        .active_account()
++        .map_err(|error| {
++            CodexErr::UnsupportedOperation(format!(
++                "could not load the active MeshAgent account: {error}"
++            ))
++        })?
++        .filter(|account| account.authenticated)
++        .ok_or_else(|| {
++            CodexErr::UnsupportedOperation(
++                "not logged in to MeshAgent; run `codex login`".to_string(),
++            )
++        })?;
++    let project_id = account.active_project.ok_or_else(|| {
++        CodexErr::UnsupportedOperation(
++            "no active MeshAgent project; run `codex project activate`".to_string(),
++        )
++    })?;
++    Ok(meshagent_routing_info(info, &api_url, &project_id))
++}
++
++fn meshagent_routing_info(
++    mut info: ModelProviderInfo,
++    api_url: &str,
++    project_id: &str,
++) -> ModelProviderInfo {
++    info.base_url = Some(format!("{api_url}/openai/v1"));
++    info.http_headers
++        .get_or_insert_default()
++        .insert("Meshagent-Project-Id".to_string(), project_id.into());
++    info
+ }
+ 
+ impl ModelProvider for ConfiguredModelProvider {
+@@ -441,6 +489,23 @@ impl ModelProvider for ConfiguredModelProvider {
+         })
+     }
+ 
++    fn api_provider(&self) -> ModelProviderFuture<'_, codex_protocol::error::Result<Provider>> {
++        Box::pin(async move {
++            let auth = self.auth().await;
++            let mut provider = self
++                .runtime_info()?
++                .to_api_provider(auth.as_ref().map(CodexAuth::auth_mode))?;
++            enforce_managed_residency(&mut provider);
++            Ok(provider)
++        })
++    }
++
++    fn runtime_base_url(
++        &self,
++    ) -> ModelProviderFuture<'_, codex_protocol::error::Result<Option<String>>> {
++        Box::pin(async move { Ok(self.runtime_info()?.base_url) })
++    }
++
+     fn models_manager(
+         &self,
+         codex_home: PathBuf,
+@@ -1206,4 +1271,23 @@ mod tests {
+                 .any(|model| model.slug == "provider-model")
+         );
+     }
++
++    #[test]
++    fn meshagent_routing_sets_api_url_and_project_header() {
++        let info = meshagent_routing_info(
++            ModelProviderInfo::create_meshagent_provider(),
++            "https://tenant.example.test",
++            "project-123",
++        );
++        let provider = info.to_api_provider(None).expect("API provider");
++
++        assert_eq!(provider.base_url, "https://tenant.example.test/openai/v1");
++        assert_eq!(
++            provider
++                .headers
++                .get("Meshagent-Project-Id")
++                .and_then(|value| value.to_str().ok()),
++            Some("project-123")
++        );
++    }
+ }
+diff --git a/codex-rs/models-manager/src/manager.rs b/codex-rs/models-manager/src/manager.rs
+index 45835c3..396d82d 100644
+--- a/codex-rs/models-manager/src/manager.rs
++++ b/codex-rs/models-manager/src/manager.rs
+@@ -38,6 +38,11 @@ pub trait ModelsEndpointClient: fmt::Debug + Send + Sync {
+     /// Returns whether this provider can authenticate command-scoped requests.
+     fn has_command_auth(&self) -> bool;
+ 
++    /// Returns whether this provider exposes a remote catalog independently of Codex backend auth.
++    fn has_provider_remote_catalog(&self) -> bool {
++        false
++    }
++
+     /// Returns whether the currently resolved auth can use Codex backend-only models.
+     fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool>;
+ 
+@@ -435,7 +440,9 @@ impl OpenAiModelsManager {
+     }
+ 
+     async fn should_refresh_models(&self) -> bool {
+-        self.endpoint_client.uses_codex_backend().await || self.endpoint_client.has_command_auth()
++        self.endpoint_client.uses_codex_backend().await
++            || self.endpoint_client.has_command_auth()
++            || self.endpoint_client.has_provider_remote_catalog()
+     }
+ 
+     async fn get_etag(&self) -> Option<String> {
+diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
+index 055612e..5220b5a 100644
+--- a/codex-rs/tui/src/app/event_dispatch.rs
++++ b/codex-rs/tui/src/app/event_dispatch.rs
+@@ -20,6 +20,7 @@ use crate::session_resume::cwds_differ;
+ use codex_app_server_protocol::ThreadGoalStatus;
+ #[cfg(target_os = "windows")]
+ use codex_config::types::WindowsSandboxModeToml;
++use codex_login::meshagent::MeshAgentAuth;
+ 
+ const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
+ 
+@@ -49,6 +50,20 @@ impl App {
+         }
+ 
+         match event {
++            AppEvent::MeshAgentProjectsLoaded { result } => {
++                self.chat_widget.show_meshagent_project_popup(result);
++            }
++            AppEvent::MeshAgentProjectActivated {
++                project_id,
++                project_name,
++                result,
++            } => {
++                self.chat_widget.on_meshagent_project_activated(
++                    project_id,
++                    project_name,
++                    result,
++                );
++            }
+             AppEvent::SkillsListLoaded { ref cwd, .. }
+             | AppEvent::PluginMentionsLoaded { ref cwd, .. }
+                 if cwds_differ(cwd, self.config.cwd.as_path()) => {}
+@@ -692,19 +707,33 @@ impl App {
+                     }
+                 }
+             },
+-            AppEvent::Logout => match app_server.logout_account().await {
+-                Ok(()) => {
+-                    self.show_shutdown_feedback(tui)?;
+-                    return Ok(self
+-                        .handle_exit_mode(app_server, ExitMode::ShutdownFirst)
+-                        .await);
+-                }
+-                Err(err) => {
+-                    tracing::error!("failed to logout: {err}");
+-                    self.chat_widget
+-                        .add_error_message(format!("Logout failed: {err}"));
++            AppEvent::Logout => {
++                let meshagent_result = MeshAgentAuth::from_environment()
++                    .and_then(|auth| auth.logout())
++                    .map(|_| ());
++                let openai_result = app_server.logout_account().await;
++                match (meshagent_result, openai_result) {
++                    (Ok(()), Ok(())) => {
++                        self.show_shutdown_feedback(tui)?;
++                        return Ok(self
++                            .handle_exit_mode(app_server, ExitMode::ShutdownFirst)
++                            .await);
++                    }
++                    (meshagent, openai) => {
++                        let mut errors = Vec::new();
++                        if let Err(error) = meshagent {
++                            errors.push(format!("MeshAgent: {error}"));
++                        }
++                        if let Err(error) = openai {
++                            errors.push(format!("OpenAI: {error}"));
++                        }
++                        let error = errors.join("; ");
++                        tracing::error!("failed to logout: {error}");
++                        self.chat_widget
++                            .add_error_message(format!("Logout failed: {error}"));
++                    }
+                 }
+-            },
++            }
+             AppEvent::FatalExitRequest(message) => {
+                 return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
+             }
+diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
+index bb5b57a..b25c272 100644
+--- a/codex-rs/tui/src/app_event.rs
++++ b/codex-rs/tui/src/app_event.rs
+@@ -37,6 +37,7 @@ use codex_app_server_protocol::ThreadGoalStatus;
+ use codex_app_server_protocol::ThreadItemsListResponse;
+ use codex_connectors::AppInfo;
+ use codex_file_search::FileMatch;
++use codex_login::meshagent::MeshAgentProject;
+ use codex_message_history::HistoryBatchCursor;
+ use codex_protocol::ThreadId;
+ use codex_protocol::openai_models::ModelPreset;
+@@ -216,6 +217,16 @@ pub(crate) enum RecapTrigger {
+ #[allow(clippy::large_enum_variant)]
+ #[derive(Debug, IntoStaticStr)]
+ pub(crate) enum AppEvent {
++    /// Return projects fetched for the `/project` picker.
++    MeshAgentProjectsLoaded {
++        result: Result<(Vec<MeshAgentProject>, Option<String>), String>,
++    },
++    /// Report the result of updating the active MeshAgent project.
++    MeshAgentProjectActivated {
++        project_id: String,
++        project_name: String,
++        result: Result<(), String>,
++    },
+     /// Open the daemon-wide overview of loaded root sessions.
+     OpenAgentsOverview,
+     /// Update the daemon-wide overview after a background thread listing finishes.
+diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
+index 8bbb689..57d753f 100644
+--- a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
++++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
+@@ -3,6 +3,7 @@ source: tui/src/bottom_pane/command_popup.rs
+ expression: commands
+ ---
+ /model - choose what model and reasoning effort to use
++/project - choose the active MeshAgent project
+ /ide - include current selection, open files, and other context from your IDE
+ /permissions - choose what Codex is allowed to do
+ /keymap - remap TUI shortcuts
+diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
+index 4b601e5..22584b2 100644
+--- a/codex-rs/tui/src/chatwidget.rs
++++ b/codex-rs/tui/src/chatwidget.rs
+@@ -387,6 +387,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
+ mod model_popup_state;
+ mod model_popups;
+ mod notifications;
++mod project_popup;
+ use self::notifications::Notification;
+ mod permission_popups;
+ mod permission_shortcuts;
+diff --git a/codex-rs/tui/src/chatwidget/project_popup.rs b/codex-rs/tui/src/chatwidget/project_popup.rs
+new file mode 100644
+index 0000000..326390c
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/project_popup.rs
+@@ -0,0 +1,108 @@
++//! MeshAgent project selection for the `/project` command.
++
++use super::*;
++use codex_login::meshagent::MeshAgentAuth;
++use codex_login::meshagent::MeshAgentProject;
++
++impl ChatWidget {
++    pub(crate) fn open_meshagent_project_popup(&mut self) {
++        if !self.config.model_provider.is_meshagent() {
++            self.add_error_message(
++                "Project selection is only available with the MeshAgent model provider."
++                    .to_string(),
++            );
++            return;
++        }
++
++        self.add_info_message("Loading MeshAgent projects...".to_string(), None);
++        let tx = self.app_event_tx.clone();
++        std::mem::drop(tokio::spawn(async move {
++            let result = async {
++                let auth = MeshAgentAuth::from_environment().map_err(|error| error.to_string())?;
++                let active_project = auth
++                    .active_account()
++                    .map_err(|error| error.to_string())?
++                    .and_then(|account| account.active_project);
++                let projects = auth.projects().await.map_err(|error| error.to_string())?;
++                Ok((projects, active_project))
++            }
++            .await;
++            tx.send(AppEvent::MeshAgentProjectsLoaded { result });
++        }));
++    }
++
++    pub(crate) fn show_meshagent_project_popup(
++        &mut self,
++        result: Result<(Vec<MeshAgentProject>, Option<String>), String>,
++    ) {
++        let (projects, active_project) = match result {
++            Ok(result) => result,
++            Err(error) => {
++                self.add_error_message(format!("Could not load MeshAgent projects: {error}"));
++                return;
++            }
++        };
++        if projects.is_empty() {
++            self.add_info_message("No MeshAgent projects are available.".to_string(), None);
++            return;
++        }
++
++        let items = projects
++            .into_iter()
++            .map(|project| {
++                let project_id = project.id.clone();
++                let project_name = project.name.clone();
++                let description = project
++                    .project_key
++                    .as_deref()
++                    .map(|key| format!("{key} · {}", project.id))
++                    .or_else(|| Some(project.id.clone()));
++                SelectionItem {
++                    name: project.name,
++                    description,
++                    is_current: active_project.as_deref() == Some(project.id.as_str()),
++                    actions: vec![Box::new(move |tx| {
++                        let result = MeshAgentAuth::from_environment()
++                            .and_then(|auth| auth.set_active_project(&project_id))
++                            .map_err(|error| error.to_string());
++                        tx.send(AppEvent::MeshAgentProjectActivated {
++                            project_id: project_id.clone(),
++                            project_name: project_name.clone(),
++                            result,
++                        });
++                    })],
++                    dismiss_on_select: true,
++                    ..Default::default()
++                }
++            })
++            .collect();
++        self.bottom_pane.show_selection_view(SelectionViewParams {
++            title: Some("Select MeshAgent Project".to_string()),
++            subtitle: Some(
++                "Applies to subsequent turns; an in-flight turn is unchanged.".to_string(),
++            ),
++            footer_hint: Some(standard_popup_hint_line()),
++            items,
++            is_searchable: true,
++            search_placeholder: Some("Search projects".to_string()),
++            ..Default::default()
++        });
++    }
++
++    pub(crate) fn on_meshagent_project_activated(
++        &mut self,
++        project_id: String,
++        project_name: String,
++        result: Result<(), String>,
++    ) {
++        match result {
++            Ok(()) => self.add_info_message(
++                format!("Active MeshAgent project: {project_name} ({project_id})"),
++                Some("The new project will be used for subsequent turns.".to_string()),
++            ),
++            Err(error) => {
++                self.add_error_message(format!("Could not activate MeshAgent project: {error}"));
++            }
++        }
++    }
++}
+diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+index 89a08b7..6edc993 100644
+--- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
++++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+@@ -298,6 +298,9 @@ impl ChatWidget {
+                 self.open_model_popup();
+                 self.defer_input_until_settings_applied();
+             }
++            SlashCommand::Project => {
++                self.open_meshagent_project_popup();
++            }
+             SlashCommand::Personality => {
+                 self.open_personality_popup();
+                 self.defer_input_until_settings_applied();
+@@ -1170,6 +1173,7 @@ impl ChatWidget {
+             | SlashCommand::Compact
+             | SlashCommand::Review
+             | SlashCommand::Model
++            | SlashCommand::Project
+             | SlashCommand::Personality
+             | SlashCommand::Plan
+             | SlashCommand::Goal
+diff --git a/codex-rs/tui/src/chatwidget/tests/helpers.rs b/codex-rs/tui/src/chatwidget/tests/helpers.rs
+index 33c46c3..281afa3 100644
+--- a/codex-rs/tui/src/chatwidget/tests/helpers.rs
++++ b/codex-rs/tui/src/chatwidget/tests/helpers.rs
+@@ -15,6 +15,9 @@ pub(super) async fn test_config() -> Config {
+         Config::load_default_with_cli_overrides_for_codex_home(codex_home.clone(), Vec::new())
+             .await
+             .expect("config");
++    config.model_provider =
++        codex_model_provider_info::built_in_model_providers(/*openai_base_url*/ None)["openai"]
++            .clone();
+     config.codex_home = codex_home.abs();
+     config.sqlite = codex_state::SqliteConfig::new_for_testing(codex_home.as_path().abs());
+     config.log_dir = codex_home.join("log");
+diff --git a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
+index f0cb0be..a9e3ca6 100644
+--- a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
++++ b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
+@@ -12,6 +12,7 @@ use codex_app_server_protocol::PluginShareDiscoverability;
+ use codex_app_server_protocol::PluginSource;
+ use codex_connectors::AppInfo;
+ use codex_features::Stage;
++use codex_login::meshagent::MeshAgentProject;
+ use pretty_assertions::assert_eq;
+ 
+ #[tokio::test]
+@@ -76,6 +77,44 @@ async fn plugins_popup_loading_state_snapshot() {
+     assert_chatwidget_snapshot!("plugins_popup_loading_state", popup);
+ }
+ 
++#[tokio::test]
++async fn meshagent_project_popup_snapshot() {
++    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.show_meshagent_project_popup(Ok((
++        vec![
++            MeshAgentProject {
++                id: "project-one".to_string(),
++                name: "Project One".to_string(),
++                project_key: Some("one".to_string()),
++            },
++            MeshAgentProject {
++                id: "project-two".to_string(),
++                name: "Project Two".to_string(),
++                project_key: Some("two".to_string()),
++            },
++            MeshAgentProject {
++                id: "project-three".to_string(),
++                name: "Project Three".to_string(),
++                project_key: None,
++            },
++        ],
++        Some("project-two".to_string()),
++    )));
++
++    let popup = render_bottom_popup(&chat, /*width*/ 80);
++    insta::assert_snapshot!(popup, @r###"
++      Select MeshAgent Project
++      Applies to subsequent turns; an in-flight turn is unchanged.
++
++      Search projects
++    › Project One            one · project-one
++      Project Two (current)  two · project-two
++      Project Three          project-three
++
++      Press enter to confirm or esc to go back
++    "###);
++}
++
+ #[tokio::test]
+ async fn marketplace_upgrade_loading_popup_snapshot() {
+     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
+index 7c3217b..7e1cafb 100644
+--- a/codex-rs/tui/src/lib.rs
++++ b/codex-rs/tui/src/lib.rs
+@@ -55,6 +55,7 @@ use codex_login::default_client::originator;
+ use codex_login::default_client::set_default_client_residency_requirement;
+ use codex_login::enforce_login_restrictions;
+ use codex_login::is_workload_identity_selected;
++use codex_login::meshagent::MeshAgentAuth;
+ use codex_protocol::ThreadId;
+ use codex_protocol::auth::AuthMode;
+ use codex_protocol::config_types::AltScreenMode;
+@@ -1122,6 +1123,20 @@ async fn run_ratatui_app(
+     let startup_model_provider = initial_config.model_provider_id.clone();
+     let (login_status, mut startup_account) = if workload_identity_selected {
+         (LoginStatus::AuthMode(AuthMode::Chatgpt), None)
++    } else if initial_config.model_provider.is_meshagent() {
++        let authenticated = MeshAgentAuth::from_environment()
++            .and_then(|auth| auth.active_account())
++            .ok()
++            .flatten()
++            .is_some_and(|account| account.authenticated);
++        (
++            if authenticated {
++                LoginStatus::AuthMode(AuthMode::ApiKey)
++            } else {
++                LoginStatus::NotAuthenticated
++            },
++            None,
++        )
+     } else if initial_config.model_provider.requires_openai_auth {
+         let Some(active_app_server) = app_server.as_mut() else {
+             unreachable!("app server should exist when auth is required");
+@@ -1936,7 +1951,7 @@ fn should_show_onboarding(
+ fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool {
+     // Only show the login screen for providers that actually require OpenAI auth
+     // (OpenAI or equivalents). For OSS/other providers, skip login entirely.
+-    if !config.model_provider.requires_openai_auth {
++    if !config.model_provider.requires_openai_auth && !config.model_provider.is_meshagent() {
+         return false;
+     }
+ 
+@@ -2002,15 +2017,15 @@ mod tests {
+                 false,
+             ),
+             (
+-                "enabled for the default provider",
+-                enabled,
++                "explicit OpenAI provider",
++                "model_provider = \"openai\"\n[features]\nbedrock_setup_wizard = true\n",
+                 LoginStatus::NotAuthenticated,
+                 AppServerTarget::Embedded,
+-                true,
++                false,
+             ),
+             (
+-                "explicit provider",
+-                "model_provider = \"openai\"\n[features]\nbedrock_setup_wizard = true\n",
++                "disabled for the default MeshAgent provider",
++                enabled,
+                 LoginStatus::NotAuthenticated,
+                 AppServerTarget::Embedded,
+                 false,
+diff --git a/codex-rs/tui/src/onboarding/auth.rs b/codex-rs/tui/src/onboarding/auth.rs
+index d242732..17507d5 100644
+--- a/codex-rs/tui/src/onboarding/auth.rs
++++ b/codex-rs/tui/src/onboarding/auth.rs
+@@ -16,6 +16,9 @@ use codex_app_server_protocol::ClientRequest;
+ use codex_app_server_protocol::LoginAccountParams;
+ use codex_app_server_protocol::LoginAccountResponse;
+ use codex_login::AuthConfig;
++use codex_login::meshagent::MeshAgentAuth;
++use codex_login::meshagent::MeshAgentLoginCancel;
++use codex_login::meshagent::MeshAgentProject;
+ use codex_login::read_openai_api_key_from_env;
+ use codex_protocol::auth::AuthMode;
+ use crossterm::event::KeyCode;
+@@ -82,6 +85,9 @@ mod headless_chatgpt_login;
+ #[derive(Clone)]
+ pub(crate) enum SignInState {
+     PickMode,
++    MeshAgentContinueInBrowser(MeshAgentBrowserState),
++    MeshAgentProjectChoice(MeshAgentProjectChoiceState),
++    MeshAgentSuccess,
+     ChatGptContinueInBrowser(ContinueInBrowserState),
+     #[allow(dead_code)]
+     ChatGptDeviceCode(ContinueWithDeviceCodeState),
+@@ -95,12 +101,25 @@ pub(crate) enum SignInState {
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub(crate) enum SignInOption {
++    MeshAgent,
+     ChatGpt,
+     DeviceCode,
+     ApiKey,
+     Bedrock,
+ }
+ 
++#[derive(Clone)]
++pub(crate) struct MeshAgentBrowserState {
++    cancel: MeshAgentLoginCancel,
++    auth_url: String,
++}
++
++#[derive(Clone)]
++pub(crate) struct MeshAgentProjectChoiceState {
++    projects: Vec<MeshAgentProject>,
++    selected: usize,
++}
++
+ const API_KEY_DISABLED_MESSAGE: &str = "API key login is disabled.";
+ pub(super) fn onboarding_request_id() -> codex_app_server_protocol::RequestId {
+     codex_app_server_protocol::RequestId::String(Uuid::new_v4().to_string())
+@@ -189,6 +208,10 @@ impl KeyboardHandler for AuthModeWidget {
+             return;
+         }
+ 
++        if self.handle_meshagent_project_key_event(&key_event) {
++            return;
++        }
++
+         if keys::MOVE_UP.is_pressed(key_event) {
+             self.move_highlight(/*delta*/ -1);
+             return;
+@@ -219,6 +242,7 @@ impl KeyboardHandler for AuthModeWidget {
+                 SignInState::PickMode => {
+                     self.handle_sign_in_option(self.highlighted_mode);
+                 }
++                SignInState::MeshAgentSuccess => {}
+                 SignInState::ChatGptSuccessMessage => {
+                     *self.sign_in_state.write().unwrap() = SignInState::ChatGptSuccess;
+                 }
+@@ -261,6 +285,7 @@ pub(crate) struct AuthModeWidget {
+     pub bedrock_setup_enabled: bool,
+     pub animations_enabled: bool,
+     pub animations_suppressed: Cell<bool>,
++    pub meshagent_login: bool,
+ }
+ 
+ impl AuthModeWidget {
+@@ -271,13 +296,16 @@ impl AuthModeWidget {
+     pub(crate) fn should_suppress_animations(&self) -> bool {
+         matches!(
+             &*self.sign_in_state.read().unwrap(),
+-            SignInState::ChatGptContinueInBrowser(_) | SignInState::ChatGptDeviceCode(_)
++            SignInState::MeshAgentContinueInBrowser(_)
++                | SignInState::ChatGptContinueInBrowser(_)
++                | SignInState::ChatGptDeviceCode(_)
+         )
+     }
+ 
+     pub(crate) fn cancel_active_attempt(&self) {
+         let mut sign_in_state = self.sign_in_state.write().unwrap();
+         match &*sign_in_state {
++            SignInState::MeshAgentContinueInBrowser(state) => state.cancel.cancel(),
+             SignInState::ChatGptContinueInBrowser(state) => {
+                 let request_handle = self.app_server_request_handle.clone();
+                 let login_id = state.login_id.clone();
+@@ -349,6 +377,9 @@ impl AuthModeWidget {
+     }
+ 
+     fn displayed_sign_in_options(&self) -> Vec<SignInOption> {
++        if self.meshagent_login {
++            return vec![SignInOption::MeshAgent];
++        }
+         let mut options = vec![SignInOption::ChatGpt];
+         if self.is_chatgpt_login_allowed() {
+             options.push(SignInOption::DeviceCode);
+@@ -363,6 +394,9 @@ impl AuthModeWidget {
+     }
+ 
+     fn selectable_sign_in_options(&self) -> Vec<SignInOption> {
++        if self.meshagent_login {
++            return vec![SignInOption::MeshAgent];
++        }
+         let mut options = Vec::new();
+         if self.is_chatgpt_login_allowed() {
+             options.push(SignInOption::ChatGpt);
+@@ -401,6 +435,7 @@ impl AuthModeWidget {
+ 
+     fn handle_sign_in_option(&mut self, option: SignInOption) {
+         match option {
++            SignInOption::MeshAgent => self.start_meshagent_login(),
+             SignInOption::ChatGpt => {
+                 if self.is_chatgpt_login_allowed() {
+                     self.start_chatgpt_login();
+@@ -429,14 +464,23 @@ impl AuthModeWidget {
+     }
+ 
+     fn disallow_api_login(&mut self) {
+-        self.highlighted_mode = SignInOption::ChatGpt;
++        self.highlighted_mode = if self.meshagent_login {
++            SignInOption::MeshAgent
++        } else {
++            SignInOption::ChatGpt
++        };
+         self.set_error(Some(API_KEY_DISABLED_MESSAGE.to_string()));
+         *self.sign_in_state.write().unwrap() = SignInState::PickMode;
+         self.request_frame.schedule_frame();
+     }
+ 
+     fn render_pick_mode(&self, area: Rect, buf: &mut Buffer) {
+-        let mut lines: Vec<Line> = if self.bedrock_setup_enabled {
++        let mut lines: Vec<Line> = if self.meshagent_login {
++            vec![
++                "  Sign in with MeshAgent to use Codex with your organization.".into(),
++                "".into(),
++            ]
++        } else if self.bedrock_setup_enabled {
+             vec!["  Choose how you want to use Codex.".into(), "".into()]
+         } else {
+             vec![
+@@ -490,6 +534,14 @@ impl AuthModeWidget {
+ 
+         for (idx, option) in self.displayed_sign_in_options().into_iter().enumerate() {
+             match option {
++                SignInOption::MeshAgent => {
++                    lines.extend(create_mode_item(
++                        idx,
++                        option,
++                        "Sign in with MeshAgent",
++                        "Use your MeshAgent account and project",
++                    ));
++                }
+                 SignInOption::ChatGpt => {
+                     lines.extend(create_mode_item(
+                         idx,
+@@ -608,6 +660,65 @@ impl AuthModeWidget {
+         }
+     }
+ 
++    fn render_meshagent_continue_in_browser(&self, area: Rect, buf: &mut Buffer) {
++        let sign_in_state = self.sign_in_state.read().unwrap();
++        let Some(auth_url) = (match &*sign_in_state {
++            SignInState::MeshAgentContinueInBrowser(state) => Some(state.auth_url.clone()),
++            _ => None,
++        }) else {
++            return;
++        };
++        drop(sign_in_state);
++        let lines = vec![
++            "  Finish signing in to MeshAgent via your browser".into(),
++            "".into(),
++            "  If the link did not open automatically, open:".into(),
++            "".into(),
++            Line::from(vec!["  ".into(), auth_url.clone().cyan().underlined()]),
++            "".into(),
++            Line::from(vec![
++                "  Press ".dim(),
++                self.cancel_binding().into(),
++                " to cancel".dim(),
++            ]),
++        ];
++        Paragraph::new(lines)
++            .wrap(Wrap { trim: false })
++            .render(area, buf);
++        mark_url_hyperlink(buf, area, &auth_url);
++    }
++
++    fn render_meshagent_project_choice(
++        &self,
++        area: Rect,
++        buf: &mut Buffer,
++        state: &MeshAgentProjectChoiceState,
++    ) {
++        let mut lines = vec!["  Choose a MeshAgent project for Codex:".into(), "".into()];
++        for (index, project) in state.projects.iter().enumerate() {
++            let marker = if index == state.selected { ">" } else { " " };
++            let line = format!("  {marker} {} ({})", project.name, project.id);
++            lines.push(if index == state.selected {
++                line.cyan().into()
++            } else {
++                line.into()
++            });
++        }
++        lines.push("".into());
++        lines.push(Line::from(vec![
++            "  Press ".dim(),
++            self.confirm_binding().into(),
++            " to activate".dim(),
++        ]));
++        Paragraph::new(lines)
++            .wrap(Wrap { trim: false })
++            .render(area, buf);
++    }
++
++    fn render_meshagent_success(&self, area: Rect, buf: &mut Buffer) {
++        Paragraph::new("✓ Signed in with MeshAgent".green()).render(area, buf);
++    }
++
+     fn render_chatgpt_success_message(&self, area: Rect, buf: &mut Buffer) {
+         let mut docs_line = HyperlinkLine::new(Line::from("  For more details see the ").dim());
+         docs_line.push_span(
+@@ -980,6 +1091,94 @@ impl AuthModeWidget {
+         headless_chatgpt_login::start_headless_chatgpt_login(self);
+     }
+ 
++    fn start_meshagent_login(&mut self) {
++        self.set_error(None);
++        let auth = match MeshAgentAuth::from_environment() {
++            Ok(auth) => auth,
++            Err(error) => {
++                self.set_error(Some(error.to_string()));
++                return;
++            }
++        };
++        let attempt = match auth.start_login(None) {
++            Ok(attempt) => attempt,
++            Err(error) => {
++                self.set_error(Some(error.to_string()));
++                return;
++            }
++        };
++        let auth_url = attempt.auth_url.clone();
++        *self.sign_in_state.write().unwrap() =
++            SignInState::MeshAgentContinueInBrowser(MeshAgentBrowserState {
++                cancel: attempt.cancel_handle(),
++                auth_url: auth_url.clone(),
++            });
++        if let Err(error) = webbrowser::open(&auth_url) {
++            tracing::warn!("failed to open MeshAgent login URL: {error}");
++        }
++        let sign_in_state = Arc::clone(&self.sign_in_state);
++        let error = Arc::clone(&self.error);
++        let request_frame = self.request_frame.clone();
++        tokio::spawn(async move {
++            match attempt.complete().await {
++                Ok(result) if result.account.active_project.is_some() => {
++                    *error.write().unwrap() = None;
++                    *sign_in_state.write().unwrap() = SignInState::MeshAgentSuccess;
++                }
++                Ok(result) if result.projects.is_empty() => {
++                    *error.write().unwrap() =
++                        Some("This MeshAgent account has no available projects.".to_string());
++                    *sign_in_state.write().unwrap() = SignInState::PickMode;
++                }
++                Ok(result) => {
++                    *error.write().unwrap() = None;
++                    *sign_in_state.write().unwrap() =
++                        SignInState::MeshAgentProjectChoice(MeshAgentProjectChoiceState {
++                            projects: result.projects,
++                            selected: 0,
++                        });
++                }
++                Err(login_error) if login_error.kind() == std::io::ErrorKind::Interrupted => {}
++                Err(login_error) => {
++                    *error.write().unwrap() = Some(login_error.to_string());
++                    *sign_in_state.write().unwrap() = SignInState::PickMode;
++                }
++            }
++            request_frame.schedule_frame();
++        });
++        self.request_frame.schedule_frame();
++    }
++
++    fn handle_meshagent_project_key_event(&mut self, key_event: &KeyEvent) -> bool {
++        let mut guard = self.sign_in_state.write().unwrap();
++        let SignInState::MeshAgentProjectChoice(state) = &mut *guard else {
++            return false;
++        };
++        if keys::MOVE_UP.is_pressed(*key_event) {
++            state.selected = state.selected.saturating_sub(1);
++        } else if keys::MOVE_DOWN.is_pressed(*key_event) {
++            state.selected = (state.selected + 1).min(state.projects.len().saturating_sub(1));
++        } else if keys::CONFIRM.is_pressed(*key_event) {
++            let project = state.projects[state.selected].clone();
++            match MeshAgentAuth::from_environment()
++                .and_then(|auth| auth.set_active_project(&project.id))
++            {
++                Ok(()) => *guard = SignInState::MeshAgentSuccess,
++                Err(project_error) => {
++                    drop(guard);
++                    self.set_error(Some(project_error.to_string()));
++                }
++            }
++            self.request_frame.schedule_frame();
++        } else if keys::CANCEL.is_pressed(*key_event) {
++            *guard = SignInState::PickMode;
++        } else {
++            return true;
++        }
++        self.request_frame.schedule_frame();
++        true
++    }
++
+     pub(crate) fn on_account_login_completed(
+         &mut self,
+         notification: AccountLoginCompletedNotification,
+@@ -1034,12 +1233,15 @@ impl StepStateProvider for AuthModeWidget {
+         let sign_in_state = self.sign_in_state.read().unwrap();
+         match &*sign_in_state {
+             SignInState::PickMode
++            | SignInState::MeshAgentContinueInBrowser(_)
++            | SignInState::MeshAgentProjectChoice(_)
+             | SignInState::ApiKeyEntry(_)
+             | SignInState::ChatGptContinueInBrowser(_)
+             | SignInState::ChatGptDeviceCode(_)
+             | SignInState::ChatGptSuccessMessage
+             | SignInState::Bedrock(_) => StepState::InProgress,
+-            SignInState::ChatGptSuccess
++            SignInState::MeshAgentSuccess
++            | SignInState::ChatGptSuccess
+             | SignInState::ApiKeyConfigured
+             | SignInState::BedrockConfigured => StepState::Complete,
+         }
+@@ -1053,6 +1255,15 @@ impl WidgetRef for AuthModeWidget {
+             SignInState::PickMode => {
+                 self.render_pick_mode(area, buf);
+             }
++            SignInState::MeshAgentContinueInBrowser(_) => {
++                self.render_meshagent_continue_in_browser(area, buf);
++            }
++            SignInState::MeshAgentProjectChoice(state) => {
++                self.render_meshagent_project_choice(area, buf, state);
++            }
++            SignInState::MeshAgentSuccess => {
++                self.render_meshagent_success(area, buf);
++            }
+             SignInState::ChatGptContinueInBrowser(_) => {
+                 self.render_continue_in_browser(area, buf);
+             }
+@@ -1174,6 +1385,7 @@ mod tests {
+             bedrock_setup_enabled: false,
+             animations_enabled: true,
+             animations_suppressed: std::cell::Cell::new(false),
++            meshagent_login: false,
+         };
+         (widget, codex_home)
+     }
+@@ -1258,6 +1470,42 @@ mod tests {
+         );
+     }
+ 
++    #[tokio::test]
++    async fn meshagent_onboarding_login_option_snapshot() {
++        let (mut widget, _tmp) = widget_forced_chatgpt().await;
++        widget.auth_config.forced_login_method = None;
++        widget.meshagent_login = true;
++        widget.highlighted_mode = SignInOption::MeshAgent;
++
++        assert_eq!(
++            widget.displayed_sign_in_options(),
++            vec![SignInOption::MeshAgent]
++        );
++        let area = Rect::new(0, 0, 76, 10);
++        let mut buffer = Buffer::empty(area);
++        widget.render_pick_mode(area, &mut buffer);
++        let mut rows = (area.top()..area.bottom())
++            .map(|row| {
++                (area.left()..area.right())
++                    .map(|column| buffer[(column, row)].symbol())
++                    .collect::<String>()
++                    .trim_end()
++                    .to_string()
++            })
++            .collect::<Vec<_>>();
++        while rows.last().is_some_and(String::is_empty) {
++            rows.pop();
++        }
++        insta::assert_snapshot!(rows.join("\n"), @r###"
++          Sign in with MeshAgent to use Codex with your organization.
++
++        > 1. Sign in with MeshAgent
++             Use your MeshAgent account and project
++
++          Press enter to continue
++        "###);
++    }
++
+     #[tokio::test]
+     async fn saving_api_key_is_blocked_when_chatgpt_forced() {
+         let (mut widget, _tmp) = widget_forced_chatgpt().await;
+diff --git a/codex-rs/tui/src/onboarding/onboarding_screen.rs b/codex-rs/tui/src/onboarding/onboarding_screen.rs
+index 39e06b8..a10a0d6 100644
+--- a/codex-rs/tui/src/onboarding/onboarding_screen.rs
++++ b/codex-rs/tui/src/onboarding/onboarding_screen.rs
+@@ -127,6 +127,7 @@ impl OnboardingScreen {
+             .as_ref()
+             .map(|project| project.trust_target.to_string_lossy().into_owned());
+         let auth_config = config.auth_config();
++        let meshagent_login = config.model_provider.is_meshagent();
+         let mut steps: Vec<Step> = Vec::new();
+         steps.push(Step::Welcome(WelcomeWidget::new(
+             !matches!(login_status, LoginStatus::NotAuthenticated),
+@@ -134,12 +135,13 @@ impl OnboardingScreen {
+             config.animations,
+         )));
+         if show_login_screen {
+-            let highlighted_mode =
+-                if auth_config.is_login_method_allowed(ForcedLoginMethod::Chatgpt) {
+-                    SignInOption::ChatGpt
+-                } else {
+-                    SignInOption::ApiKey
+-                };
++            let highlighted_mode = if meshagent_login {
++                SignInOption::MeshAgent
++            } else if auth_config.is_login_method_allowed(ForcedLoginMethod::Chatgpt) {
++                SignInOption::ChatGpt
++            } else {
++                SignInOption::ApiKey
++            };
+             if let Some(app_server_request_handle) = app_server_request_handle {
+                 steps.push(Step::Auth(AuthModeWidget {
+                     request_frame: tui.frame_requester(),
+@@ -152,6 +154,7 @@ impl OnboardingScreen {
+                     bedrock_setup_enabled,
+                     animations_enabled: config.animations,
+                     animations_suppressed: std::cell::Cell::new(false),
++                    meshagent_login,
+                 }));
+             } else {
+                 tracing::warn!("skipping onboarding login step without app-server request handle");
+diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
+index aab133f..2f1083b 100644
+--- a/codex-rs/tui/src/slash_command.rs
++++ b/codex-rs/tui/src/slash_command.rs
+@@ -13,6 +13,7 @@ pub enum SlashCommand {
+     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
+     // more frequently used commands should be listed first.
+     Model,
++    Project,
+     Ide,
+     Permissions,
+     Keymap,
+@@ -123,6 +124,7 @@ impl SlashCommand {
+             SlashCommand::MemoryDrop => "DO NOT USE",
+             SlashCommand::MemoryUpdate => "DO NOT USE",
+             SlashCommand::Model => "choose what model and reasoning effort to use",
++            SlashCommand::Project => "choose the active MeshAgent project",
+             SlashCommand::Ide => {
+                 "include current selection, open files, and other context from your IDE"
+             }
+@@ -222,6 +224,7 @@ impl SlashCommand {
+             | SlashCommand::Memories
+             | SlashCommand::Import
+             | SlashCommand::Review
++            | SlashCommand::Project
+             | SlashCommand::Plan
+             | SlashCommand::Cd
+             | SlashCommand::Clear
+@@ -318,6 +321,13 @@ mod tests {
+         assert!(SlashCommand::Raw.available_in_side_conversation());
+         assert!(SlashCommand::Raw.supports_inline_args());
+         assert!(SlashCommand::App.available_during_task());
++        assert!(!SlashCommand::Project.available_during_task());
++    }
++
++    #[test]
++    fn project_command_is_available() {
++        assert_eq!(SlashCommand::Project.command(), "project");
++        assert_eq!(SlashCommand::from_str("project"), Ok(SlashCommand::Project));
+     }
+ 
+     #[test]
+diff --git a/codex-rs/tui/src/status/tests.rs b/codex-rs/tui/src/status/tests.rs
+index 161bbf4..4ef3ce7 100644
+--- a/codex-rs/tui/src/status/tests.rs
++++ b/codex-rs/tui/src/status/tests.rs
+@@ -133,6 +133,10 @@ fn app_server_workspace_write_profile(network_enabled: bool) -> PermissionProfil
+ async fn test_config(temp_home: &TempDir) -> Config {
+     let mut config = ConfigBuilder::default()
+         .codex_home(temp_home.path().to_path_buf())
++        .harness_overrides(crate::legacy_core::config::ConfigOverrides {
++            model_provider: Some("openai".to_string()),
++            ..Default::default()
++        })
+         .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+         .build()
+         .await
+@@ -356,6 +360,11 @@ async fn status_snapshot_includes_reasoning_details() {
+ #[tokio::test]
+ async fn status_snapshot_shows_chatgpt_plan_without_email() {
+     let temp_home = TempDir::new().expect("temp home");
++    std::fs::write(
++        temp_home.path().join("config.toml"),
++        "model_provider = \"openai\"\n",
++    )
++    .expect("write OpenAI provider config");
+     write_models_cache(temp_home.path()).expect("write models cache");
+     let mut config = test_config(&temp_home).await;
+     config.model = Some("gpt-5.1-codex-max".to_string());

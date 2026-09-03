@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+overlay_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+lock_file="$overlay_dir/upstream.lock"
+series_file="$overlay_dir/patches/series"
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+lock_value() {
+  awk -F '[[:space:]]*=[[:space:]]*' -v wanted="$1" '
+    $1 == wanted {
+      value = $2
+      sub(/[[:space:]]*#.*/, "", value)
+      gsub(/^"|"$/, "", value)
+      print value
+      exit
+    }
+  ' "$lock_file"
+}
+
+repository="$(lock_value repository)"
+upstream_tag="$(lock_value tag)"
+upstream_commit="$(lock_value commit)"
+distribution_version="$(lock_value distribution_version)"
+patchset="$(lock_value patchset)"
+
+[[ -n "$repository" ]] || die "repository is missing from upstream.lock"
+[[ "$upstream_commit" =~ ^[0-9a-f]{40}$ ]] || die "upstream.lock must contain a full commit SHA"
+[[ "$patchset" =~ ^[0-9]+$ ]] || die "patchset must be an integer"
+
+temporary_root="${TMPDIR:-/tmp}"
+temporary_root="${temporary_root%/}"
+work_root="${MESHAGENT_CODEX_WORK_ROOT:-$temporary_root/meshagent-codex-worktrees}"
+work_root="${work_root%/}"
+default_worktree="$work_root/${upstream_commit:0:12}-p$patchset"
+worktree="${MESHAGENT_CODEX_WORKTREE:-$default_worktree}"
+
+patch_digest() {
+  {
+    printf 'series\n'
+    while IFS= read -r patch_name || [[ -n "$patch_name" ]]; do
+      [[ -z "$patch_name" || "$patch_name" == \#* ]] && continue
+      patch_path="$overlay_dir/patches/$patch_name"
+      [[ -f "$patch_path" ]] || die "patch listed in series does not exist: $patch_name"
+      printf '%s %s\n' "$patch_name" "$(git hash-object "$patch_path")"
+    done < "$series_file"
+  } | git hash-object --stdin
+}
+
+expected_state() {
+  printf 'upstream=%s\npatchset=%s\npatch_digest=%s\n' \
+    "$upstream_commit" "$patchset" "$(patch_digest)"
+}
+
+checkout_upstream() {
+  local destination="$1"
+  local resolved
+
+  require_command git
+  [[ ! -e "$destination" ]] || die "checkout path already exists: $destination"
+  mkdir -p "$(dirname -- "$destination")"
+
+  git init --quiet "$destination"
+  git -C "$destination" remote add origin "$repository"
+  git -C "$destination" fetch --quiet --depth=1 origin \
+    "refs/tags/$upstream_tag:refs/tags/$upstream_tag"
+  resolved="$(git -C "$destination" rev-parse "$upstream_tag^{commit}")"
+  [[ "$resolved" == "$upstream_commit" ]] || \
+    die "tag $upstream_tag resolved to $resolved, expected $upstream_commit"
+  git -C "$destination" checkout --quiet --detach "$upstream_commit"
+}
+
+materialize() {
+  local destination="${1:-$worktree}"
+  local destination_state="$destination/.git/meshagent-codex-distribution-state"
+  local expected
+  expected="$(expected_state)"
+
+  if [[ -e "$destination" ]]; then
+    [[ -f "$destination_state" ]] || \
+      die "existing path is not a managed materialization: $destination"
+    [[ "$(<"$destination_state")" == "$expected" ]] || \
+      die "existing materialization does not match upstream.lock and patches: $destination"
+    git -C "$destination" diff --quiet || die "materialized checkout has unstaged changes: $destination"
+    git -C "$destination" diff --cached --quiet || die "materialized checkout has staged changes: $destination"
+    printf '%s\n' "$destination"
+    return
+  fi
+
+  checkout_upstream "$destination"
+  git -C "$destination" config user.name "MeshAgent Codex Build"
+  git -C "$destination" config user.email "codex-build@meshagent.com"
+
+  while IFS= read -r patch_name || [[ -n "$patch_name" ]]; do
+    [[ -z "$patch_name" || "$patch_name" == \#* ]] && continue
+    git -C "$destination" am --quiet --3way "$overlay_dir/patches/$patch_name"
+  done < "$series_file"
+
+  expected_state > "$destination_state"
+  printf '%s\n' "$destination"
+}
+
+ensure_materialized() {
+  materialize "$worktree"
+}
+
+run_in_source() {
+  local source
+  source="$(ensure_materialized)"
+  (cd "$source/codex-rs" && "$@")
+}
+
+staged_binary_path() {
+  local source="$1"
+  local source_binary="${2:-}"
+  if [[ "$source_binary" == *.exe || -f "$source/codex-rs/target/release/codex.exe" ]]; then
+    printf '%s\n' "$source/dist/codex.exe"
+  else
+    printf '%s\n' "$source/dist/codex"
+  fi
+}
+
+build_distribution() {
+  local source source_binary destination target_root
+  source="$(ensure_materialized)"
+  (cd "$source/codex-rs" && cargo build --locked --release -p codex-cli --bin codex)
+
+  target_root="${CARGO_TARGET_DIR:-$source/codex-rs/target}"
+  if [[ "$target_root" != /* ]]; then
+    target_root="$source/codex-rs/$target_root"
+  fi
+
+  if [[ -f "$target_root/release/codex.exe" ]]; then
+    source_binary="$target_root/release/codex.exe"
+  else
+    source_binary="$target_root/release/codex"
+  fi
+  destination="$(staged_binary_path "$source" "$source_binary")"
+  mkdir -p "$source/dist"
+  cp "$source_binary" "$destination"
+  chmod 0755 "$destination"
+  printf '%s\n' "$destination"
+}
+
+meshagent_codex_home() {
+  local requested_home="${1:-}"
+  local user_home
+
+  if [[ -z "$requested_home" ]]; then
+    requested_home="${MESHAGENT_CODEX_HOME:-}"
+  fi
+  if [[ -z "$requested_home" ]]; then
+    user_home="${HOME:-}"
+    [[ -n "$user_home" ]] || die "HOME is not set; pass an absolute managed home path"
+    requested_home="$user_home/.meshagent/codex"
+  fi
+  [[ "$requested_home" == /* ]] || die "managed home must be an absolute path: $requested_home"
+  printf '%s\n' "${requested_home%/}"
+}
+
+install_managed_binary() {
+  local source_binary="$1"
+  local requested_home="${2:-}"
+  local managed_home managed_name destination
+
+  managed_home="$(meshagent_codex_home "$requested_home")"
+  if [[ "$source_binary" == *.exe ]]; then
+    managed_name="codex.exe"
+  else
+    managed_name="codex"
+  fi
+  destination="$managed_home/packages/standalone/current/$managed_name"
+  mkdir -p "$(dirname -- "$destination")"
+  cp "$source_binary" "$destination"
+  chmod 0755 "$destination"
+  printf '%s\n' "$destination"
+}
+
+run_tests() {
+  local source
+  source="$(ensure_materialized)"
+  require_command just
+  require_command cargo-nextest
+  (cd "$source" && env -u NO_COLOR TERM=xterm-256color just test "$@")
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ./codex-distribution <command> [arguments]
+
+Commands:
+  materialize [path]  Fetch locked upstream source and apply the patch series
+  path                Print the default or configured materialized path
+  status              Show distribution identity and checkout status
+  format              Run upstream formatting in the materialized checkout
+  check-format        Check Rust formatting
+  check               Cargo-check the crates changed by the patch series
+  build               Build and stage the codex release binary
+  install-managed [home]
+                      Build and install the daemon-managed binary
+  test-patched        Test all crates changed by the patch series
+  test [arguments]    Run upstream tests and forward arguments to nextest
+  run [arguments]     Run the debug CLI
+  verify              Check format/build/tests and smoke-test CLI identity
+  help                Show this help
+EOF
+}
+
+command_name="${1:-help}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+case "$command_name" in
+  materialize)
+    materialize "${1:-$worktree}"
+    ;;
+  path)
+    printf '%s\n' "$worktree"
+    ;;
+  status)
+    printf 'repository: %s\n' "$repository"
+    printf 'tag: %s\n' "$upstream_tag"
+    printf 'commit: %s\n' "$upstream_commit"
+    printf 'distribution version: %s\n' "$distribution_version"
+    printf 'patchset: %s\n' "$patchset"
+    printf 'worktree: %s\n' "$worktree"
+    if [[ -d "$worktree/.git" ]]; then
+      git -C "$worktree" status --short --branch
+    else
+      printf 'materialized: no\n'
+    fi
+    ;;
+  format)
+    require_command just
+    source="$(ensure_materialized)"
+    (cd "$source" && just fmt)
+    ;;
+  check-format)
+    run_in_source cargo fmt --all -- --check
+    ;;
+  check)
+    run_in_source cargo check --locked \
+      -p codex-utils-home-dir -p codex-utils-cli -p codex-app-server-transport \
+      -p codex-app-server-daemon -p codex-login -p codex-model-provider-info \
+      -p codex-model-provider -p codex-core -p codex-cli -p codex-tui \
+      -p codex-windows-sandbox
+    ;;
+  build)
+    build_distribution
+    ;;
+  install-managed)
+    binary="$(build_distribution)"
+    install_managed_binary "$binary" "${1:-}"
+    ;;
+  test-patched)
+    run_tests -p codex-utils-home-dir
+    run_tests -p codex-utils-cli
+    run_tests -p codex-app-server-transport
+    run_tests -p codex-app-server-daemon
+    run_tests -p codex-login
+    run_tests -p codex-model-provider-info
+    run_tests -p codex-model-provider
+    run_tests -p codex-core
+    run_tests -p codex-cli
+    run_tests -p codex-tui
+    run_tests -p codex-windows-sandbox
+    ;;
+  test)
+    run_tests "$@"
+    ;;
+  run)
+    run_in_source cargo run --locked -p codex-cli --bin codex -- "$@"
+    ;;
+  verify)
+    run_in_source cargo fmt --all -- --check
+    run_in_source cargo check --locked \
+      -p codex-utils-home-dir -p codex-utils-cli -p codex-app-server-transport \
+      -p codex-app-server-daemon -p codex-login -p codex-model-provider-info \
+      -p codex-model-provider -p codex-core -p codex-cli -p codex-tui \
+      -p codex-windows-sandbox
+    run_tests -p codex-utils-home-dir
+    run_tests -p codex-utils-cli
+    run_tests -p codex-app-server-transport
+    run_tests -p codex-app-server-daemon
+    run_tests -p codex-login
+    run_tests -p codex-model-provider-info
+    run_tests -p codex-model-provider
+    run_tests -p codex-core
+    run_tests -p codex-cli
+    run_tests -p codex-tui
+    run_tests -p codex-windows-sandbox
+    binary="$(build_distribution)"
+    "$binary" --version | grep -F "codex $distribution_version" >/dev/null
+    "$binary" --help | grep -F "MeshAgent Codex is maintained by MeshAgent" >/dev/null
+    "$binary" --help | grep -F '~/.meshagent/codex/config.toml' >/dev/null
+    managed_binary="$(install_managed_binary "$binary" "$(ensure_materialized)/dist/verify-home")"
+    "$managed_binary" --version | grep -F "codex $distribution_version" >/dev/null
+    printf 'verified: %s\n' "$binary"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    die "unknown command: $command_name"
+    ;;
+esac
