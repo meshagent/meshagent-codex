@@ -31,7 +31,8 @@ Daemon resources are namespaced inside that root:
 
 - control socket: `codex-app-server/control.sock`;
 - lifecycle state: `codex-app-server-daemon/`; and
-- managed executable: `packages/standalone/current/codex`.
+- managed executables: `packages/standalone/current/codex` and
+  `packages/standalone/current/codex-code-mode-host`.
 
 Automatic use of OpenAI's standalone updater is disabled. MeshAgent packaging
 owns updates to the managed executable.
@@ -81,11 +82,11 @@ area and applies each patch with `git am --3way`. It refuses to reuse a checkout
 whose upstream commit or patch digest differs. Set `MESHAGENT_CODEX_WORKTREE` to
 choose an explicit external path.
 
-`build` writes a release binary named `codex` to `dist/` inside the
-external materialized checkout. It does not put generated source or binaries in
-this repository.
+`build` writes release binaries named `codex` and `codex-code-mode-host` to
+`dist/` inside the external materialized checkout. It does not put generated
+source or binaries in this repository.
 
-`install-managed` builds and copies that binary to the daemon-managed path. It
+`install-managed` builds and copies both binaries to the daemon-managed path. It
 uses `MESHAGENT_CODEX_HOME` when set, otherwise `~/.meshagent/codex`; pass an
 absolute home path as its optional argument to stage an isolated package root.
 
@@ -98,9 +99,9 @@ status              Show lock identity and materialized checkout status
 format              Run the upstream formatter
 check-format        Check Rust formatting
 check               Run locked checks for patched crates
-build               Build and stage the release binary
+build               Build and stage the release binaries
 install-managed [home]
-                    Build and install the daemon-managed binary
+                    Build and install the daemon-managed binaries
 test-patched        Test every crate touched by the patch series
 test [arguments]    Run the upstream test suite, forwarding nextest arguments
 run [arguments]     Run the debug CLI from the materialized source

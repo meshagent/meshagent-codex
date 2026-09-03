@@ -109,13 +109,12 @@ CI should use a fresh external worktree and execute:
 ./codex-distribution verify
 ```
 
-Release packaging should take only the staged `dist/codex` binary (or
-the platform equivalent) plus required licenses and notices. Installers that
-enable the daemon must also place that same binary at
-`MESHAGENT_CODEX_HOME/packages/standalone/current/codex` (or the
-platform equivalent); `./codex-distribution install-managed` provides the
-reference layout. Preserve the
-upstream Apache-2.0 `LICENSE` and `NOTICE`, include notices for dependencies, and
+Release packaging should take the staged `dist/codex` and
+`dist/codex-code-mode-host` binaries (or their platform equivalents) plus
+required licenses and notices. Installers that enable the daemon must place both
+binaries under `MESHAGENT_CODEX_HOME/packages/standalone/current/`;
+`./codex-distribution install-managed` provides the reference layout. Preserve
+the upstream Apache-2.0 `LICENSE` and `NOTICE`, include notices for dependencies, and
 retain the visible statement that MeshAgent Codex is based on OpenAI Codex but
 is not an official OpenAI distribution. Have counsel review trademark and
 distribution requirements before public release.

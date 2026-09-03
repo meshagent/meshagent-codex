@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 6e9b232198e6b70d76566fe5abdf62bfe97112c2 Mon Sep 17 00:00:00 2001
 From: MeshAgent Codex Build <codex-build@meshagent.com>
 Date: Wed, 2 Sep 2026 19:40:18 -0700
 Subject: [PATCH] Add MeshAgent authentication and project selection
@@ -34,11 +34,11 @@ Subject: [PATCH] Add MeshAgent authentication and project selection
  codex-rs/tui/src/chatwidget/tests/helpers.rs  |   3 +
  .../chatwidget/tests/popups_and_settings.rs   |  39 ++
  codex-rs/tui/src/lib.rs                       |  27 +-
- codex-rs/tui/src/onboarding/auth.rs           | 256 +++++++++-
+ codex-rs/tui/src/onboarding/auth.rs           | 298 +++++++++++-
  .../tui/src/onboarding/onboarding_screen.rs   |  15 +-
  codex-rs/tui/src/slash_command.rs             |  10 +
  codex-rs/tui/src/status/tests.rs              |   9 +
- 34 files changed, 2954 insertions(+), 127 deletions(-)
+ 34 files changed, 2996 insertions(+), 127 deletions(-)
  create mode 100644 codex-rs/login/MESHAGENT_AUTH_SPEC.md
  create mode 100644 codex-rs/login/src/meshagent/meshagent_tests.rs
  create mode 100644 codex-rs/login/src/meshagent/mod.rs
@@ -3496,7 +3496,7 @@ index 7c3217b..7e1cafb 100644
                  AppServerTarget::Embedded,
                  false,
 diff --git a/codex-rs/tui/src/onboarding/auth.rs b/codex-rs/tui/src/onboarding/auth.rs
-index d242732..17507d5 100644
+index d242732..3cc9e92 100644
 --- a/codex-rs/tui/src/onboarding/auth.rs
 +++ b/codex-rs/tui/src/onboarding/auth.rs
 @@ -16,6 +16,9 @@ use codex_app_server_protocol::ClientRequest;
@@ -3659,7 +3659,7 @@ index d242732..17507d5 100644
                  SignInOption::ChatGpt => {
                      lines.extend(create_mode_item(
                          idx,
-@@ -608,6 +660,65 @@ impl AuthModeWidget {
+@@ -608,6 +660,70 @@ impl AuthModeWidget {
          }
      }
  
@@ -3713,8 +3713,13 @@ index d242732..17507d5 100644
 +            self.confirm_binding().into(),
 +            " to activate".dim(),
 +        ]));
++        let selected_row = state.selected.saturating_add(2);
++        let scroll_rows = selected_row
++            .saturating_add(1)
++            .saturating_sub(usize::from(area.height));
 +        Paragraph::new(lines)
 +            .wrap(Wrap { trim: false })
++            .scroll((u16::try_from(scroll_rows).unwrap_or(u16::MAX), 0))
 +            .render(area, buf);
 +    }
 +
@@ -3725,7 +3730,7 @@ index d242732..17507d5 100644
      fn render_chatgpt_success_message(&self, area: Rect, buf: &mut Buffer) {
          let mut docs_line = HyperlinkLine::new(Line::from("  For more details see the ").dim());
          docs_line.push_span(
-@@ -980,6 +1091,94 @@ impl AuthModeWidget {
+@@ -980,6 +1096,94 @@ impl AuthModeWidget {
          headless_chatgpt_login::start_headless_chatgpt_login(self);
      }
  
@@ -3820,7 +3825,7 @@ index d242732..17507d5 100644
      pub(crate) fn on_account_login_completed(
          &mut self,
          notification: AccountLoginCompletedNotification,
-@@ -1034,12 +1233,15 @@ impl StepStateProvider for AuthModeWidget {
+@@ -1034,12 +1238,15 @@ impl StepStateProvider for AuthModeWidget {
          let sign_in_state = self.sign_in_state.read().unwrap();
          match &*sign_in_state {
              SignInState::PickMode
@@ -3837,7 +3842,7 @@ index d242732..17507d5 100644
              | SignInState::ApiKeyConfigured
              | SignInState::BedrockConfigured => StepState::Complete,
          }
-@@ -1053,6 +1255,15 @@ impl WidgetRef for AuthModeWidget {
+@@ -1053,6 +1260,15 @@ impl WidgetRef for AuthModeWidget {
              SignInState::PickMode => {
                  self.render_pick_mode(area, buf);
              }
@@ -3853,7 +3858,7 @@ index d242732..17507d5 100644
              SignInState::ChatGptContinueInBrowser(_) => {
                  self.render_continue_in_browser(area, buf);
              }
-@@ -1174,6 +1385,7 @@ mod tests {
+@@ -1174,6 +1390,7 @@ mod tests {
              bedrock_setup_enabled: false,
              animations_enabled: true,
              animations_suppressed: std::cell::Cell::new(false),
@@ -3861,7 +3866,7 @@ index d242732..17507d5 100644
          };
          (widget, codex_home)
      }
-@@ -1258,6 +1470,42 @@ mod tests {
+@@ -1258,6 +1475,42 @@ mod tests {
          );
      }
  
@@ -3904,6 +3909,50 @@ index d242732..17507d5 100644
      #[tokio::test]
      async fn saving_api_key_is_blocked_when_chatgpt_forced() {
          let (mut widget, _tmp) = widget_forced_chatgpt().await;
+@@ -1502,6 +1755,43 @@ mod tests {
+         ));
+     }
+ 
++    #[tokio::test]
++    async fn meshagent_project_choice_scrolls_selected_project_into_view() {
++        let (widget, _tmp) = widget_forced_chatgpt().await;
++        let state = MeshAgentProjectChoiceState {
++            projects: (0..8)
++                .map(|index| MeshAgentProject {
++                    id: format!("project-{index}"),
++                    name: format!("Project {index}"),
++                    project_key: None,
++                })
++                .collect(),
++            selected: 7,
++        };
++        let area = Rect::new(0, 0, 48, 5);
++        let mut buffer = Buffer::empty(area);
++
++        widget.render_meshagent_project_choice(area, &mut buffer, &state);
++
++        let rendered = (area.top()..area.bottom())
++            .map(|row| {
++                (area.left()..area.right())
++                    .map(|column| buffer[(column, row)].symbol())
++                    .collect::<String>()
++                    .trim_end()
++                    .to_string()
++            })
++            .collect::<Vec<_>>()
++            .join("\n");
++        insta::assert_snapshot!(rendered, @r###"
++  Project 3 (project-3)
++  Project 4 (project-4)
++  Project 5 (project-5)
++  Project 6 (project-6)
++> Project 7 (project-7)
++"###);
++    }
++
+     #[test]
+     fn mark_url_hyperlink_wraps_cyan_underlined_cells() {
+         let url = "https://example.com";
 diff --git a/codex-rs/tui/src/onboarding/onboarding_screen.rs b/codex-rs/tui/src/onboarding/onboarding_screen.rs
 index 39e06b8..a10a0d6 100644
 --- a/codex-rs/tui/src/onboarding/onboarding_screen.rs

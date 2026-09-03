@@ -121,17 +121,16 @@ run_in_source() {
 staged_binary_path() {
   local source="$1"
   local source_binary="${2:-}"
-  if [[ "$source_binary" == *.exe || -f "$source/codex-rs/target/release/codex.exe" ]]; then
-    printf '%s\n' "$source/dist/codex.exe"
-  else
-    printf '%s\n' "$source/dist/codex"
-  fi
+  printf '%s\n' "$source/dist/$(basename -- "$source_binary")"
 }
 
 build_distribution() {
-  local source source_binary destination target_root
+  local source source_binary host_binary destination host_destination target_root
   source="$(ensure_materialized)"
-  (cd "$source/codex-rs" && cargo build --locked --release -p codex-cli --bin codex)
+  (cd "$source/codex-rs" && cargo build --locked --release \
+    -p codex-cli --bin codex \
+    -p codex-code-mode-host --bin codex-code-mode-host) || \
+    die "failed to build Codex distribution executables"
 
   target_root="${CARGO_TARGET_DIR:-$source/codex-rs/target}"
   if [[ "$target_root" != /* ]]; then
@@ -140,13 +139,18 @@ build_distribution() {
 
   if [[ -f "$target_root/release/codex.exe" ]]; then
     source_binary="$target_root/release/codex.exe"
+    host_binary="$target_root/release/codex-code-mode-host.exe"
   else
     source_binary="$target_root/release/codex"
+    host_binary="$target_root/release/codex-code-mode-host"
   fi
   destination="$(staged_binary_path "$source" "$source_binary")"
+  host_destination="$(staged_binary_path "$source" "$host_binary")"
   mkdir -p "$source/dist"
   cp "$source_binary" "$destination"
+  cp "$host_binary" "$host_destination"
   chmod 0755 "$destination"
+  chmod 0755 "$host_destination"
   printf '%s\n' "$destination"
 }
 
@@ -172,11 +176,7 @@ install_managed_binary() {
   local managed_home managed_name destination
 
   managed_home="$(meshagent_codex_home "$requested_home")"
-  if [[ "$source_binary" == *.exe ]]; then
-    managed_name="codex.exe"
-  else
-    managed_name="codex"
-  fi
+  managed_name="$(basename -- "$source_binary")"
   destination="$managed_home/packages/standalone/current/$managed_name"
   mkdir -p "$(dirname -- "$destination")"
   cp "$source_binary" "$destination"
@@ -260,6 +260,13 @@ case "$command_name" in
   install-managed)
     binary="$(build_distribution)"
     install_managed_binary "$binary" "${1:-}"
+    source="$(ensure_materialized)"
+    if [[ "$binary" == *.exe ]]; then
+      host_binary="$source/dist/codex-code-mode-host.exe"
+    else
+      host_binary="$source/dist/codex-code-mode-host"
+    fi
+    install_managed_binary "$host_binary" "${1:-}"
     ;;
   test-patched)
     run_tests -p codex-utils-home-dir
