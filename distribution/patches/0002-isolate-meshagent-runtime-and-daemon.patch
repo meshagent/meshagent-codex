@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: MeshAgent Codex Build <codex-build@meshagent.com>
 Date: Wed, 2 Sep 2026 14:09:04 -0700
-Subject: [PATCH 2/2] Isolate MeshAgent runtime without renaming Codex commands
+Subject: [PATCH] Isolate MeshAgent runtime without renaming Codex commands
 
 ---
  codex-rs/app-server-daemon/README.md          | 63 ++++++++-----------
@@ -36,11 +36,12 @@ Subject: [PATCH 2/2] Isolate MeshAgent runtime without renaming Codex commands
  codex-rs/cli/tests/marketplace_upgrade.rs     |  2 +-
  codex-rs/cli/tests/mcp_add_remove.rs          |  2 +-
  codex-rs/cli/tests/mcp_list.rs                |  2 +-
- codex-rs/cli/tests/plugin_cli.rs              |  2 +-
+ codex-rs/cli/tests/plugin_cli.rs              |  4 +-
  codex-rs/cli/tests/queue.rs                   |  6 +-
  codex-rs/cli/tests/sandbox_cloud_config.rs    |  2 +-
  codex-rs/cli/tests/sandbox_network_proxy.rs   |  4 +-
  codex-rs/cli/tests/update.rs                  |  2 +-
+ .../tests/suite/mcp_oauth_refresh_tests.rs    |  2 +-
  codex-rs/test-binary-support/lib.rs           |  8 +--
  codex-rs/tui/src/lib.rs                       |  5 +-
  codex-rs/tui/src/render/highlight.rs          |  2 +-
@@ -50,7 +51,7 @@ Subject: [PATCH 2/2] Isolate MeshAgent runtime without renaming Codex commands
  codex-rs/tui/tests/suite/resize_reflow.rs     | 20 ++++--
  codex-rs/utils/home-dir/src/lib.rs            | 48 +++++++-------
  .../src/bin/setup_main/win.rs                 |  2 +-
- 46 files changed, 176 insertions(+), 165 deletions(-)
+ 47 files changed, 178 insertions(+), 167 deletions(-)
 
 diff --git a/codex-rs/app-server-daemon/README.md b/codex-rs/app-server-daemon/README.md
 index ac512a8..deaad71 100644
@@ -322,10 +323,10 @@ index e6227a7..01637e6 100644
  
      /// Direct path to the logs SQLite database. Overrides --codex-home.
 diff --git a/codex-rs/cli/src/cloud_config.rs b/codex-rs/cli/src/cloud_config.rs
-index 3ac9047..aed03b4 100644
+index 4ca60ac..1e316ed 100644
 --- a/codex-rs/cli/src/cloud_config.rs
 +++ b/codex-rs/cli/src/cloud_config.rs
-@@ -19,7 +19,7 @@ pub(crate) async fn load_config(
+@@ -30,7 +30,7 @@ pub(crate) async fn config_builder(
      let cli_overrides = config_overrides
          .parse_overrides()
          .map_err(anyhow::Error::msg)?;
@@ -335,10 +336,10 @@ index 3ac9047..aed03b4 100644
      let bootstrap_config = load_config_toml_with_layer_stack(
          codex_home.as_path(),
 diff --git a/codex-rs/cli/src/doctor.rs b/codex-rs/cli/src/doctor.rs
-index 5735044..5a0e4c4 100644
+index 0e0e06b..725c5c9 100644
 --- a/codex-rs/cli/src/doctor.rs
 +++ b/codex-rs/cli/src/doctor.rs
-@@ -1159,7 +1159,10 @@ where
+@@ -1167,7 +1167,10 @@ where
  
  fn config_check(config: &Config) -> DoctorCheck {
      let mut details = Vec::new();
@@ -350,7 +351,7 @@ index 5735044..5a0e4c4 100644
      details.push(format!("cwd: {}", config.cwd.display()));
      details.push(format!(
          "model: {}",
-@@ -2185,7 +2188,7 @@ fn non_empty_trimmed(value: String) -> Option<String> {
+@@ -2193,7 +2196,7 @@ fn non_empty_trimmed(value: String) -> Option<String> {
  
  async fn state_check(config: &Config, command: &DoctorCommand) -> DoctorCheck {
      let mut details = Vec::new();
@@ -359,7 +360,7 @@ index 5735044..5a0e4c4 100644
      path_readiness(&mut details, "log dir", &config.log_dir);
      path_readiness(&mut details, "sqlite home", config.sqlite_config().home());
      let mut status = CheckStatus::Ok;
-@@ -2561,14 +2564,14 @@ fn fallback_state_check() -> DoctorCheck {
+@@ -2569,14 +2572,14 @@ fn fallback_state_check() -> DoctorCheck {
              "state.paths",
              "state",
              CheckStatus::Ok,
@@ -465,10 +466,10 @@ index fa0a9e2..81ed0cf 100644
              ],
              "issues": issues,
 diff --git a/codex-rs/cli/src/doctor/output/detail.rs b/codex-rs/cli/src/doctor/output/detail.rs
-index 0ee5add..df3fa98 100644
+index bca2bae..23ce672 100644
 --- a/codex-rs/cli/src/doctor/output/detail.rs
 +++ b/codex-rs/cli/src/doctor/output/detail.rs
-@@ -400,7 +400,7 @@ fn config_details(parsed: &[ParsedDetail], options: HumanOutputOptions) -> Vec<H
+@@ -403,7 +403,7 @@ fn config_details(parsed: &[ParsedDetail], options: HumanOutputOptions) -> Vec<H
          &mut out,
          parsed,
          &[
@@ -477,7 +478,7 @@ index 0ee5add..df3fa98 100644
              "cwd",
              "model",
              "model provider",
-@@ -422,7 +422,12 @@ fn config_details(parsed: &[ParsedDetail], options: HumanOutputOptions) -> Vec<H
+@@ -425,7 +425,12 @@ fn config_details(parsed: &[ParsedDetail], options: HumanOutputOptions) -> Vec<H
  
  fn state_details(parsed: &[ParsedDetail]) -> Vec<HumanDetail> {
      let mut out = Vec::new();
@@ -491,7 +492,7 @@ index 0ee5add..df3fa98 100644
      push_row_if_present(&mut out, parsed, "log dir", "log dir");
      push_row_if_present(&mut out, parsed, "sqlite home", "sqlite home");
      push_database_row(&mut out, parsed, "state DB");
-@@ -447,7 +452,7 @@ fn state_details(parsed: &[ParsedDetail]) -> Vec<HumanDetail> {
+@@ -450,7 +455,7 @@ fn state_details(parsed: &[ParsedDetail]) -> Vec<HumanDetail> {
          &mut out,
          parsed,
          &[
@@ -532,7 +533,7 @@ index c008567..75f553a 100644
      pub config_profile: Option<ProfileV2Name>,
  
 diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
-index 8eb3fdc..dde0af3 100644
+index 5801878..bac3e43 100644
 --- a/codex-rs/cli/src/main.rs
 +++ b/codex-rs/cli/src/main.rs
 @@ -461,7 +461,7 @@ type HostSandboxArgs = UnsupportedSandboxArgs;
@@ -567,10 +568,10 @@ index 38a7f32..44b2f1f 100644
          .await
          .with_context(|| format!("failed to load MCP servers from {}", codex_home.display()))?;
 diff --git a/codex-rs/cli/src/plugin_cmd.rs b/codex-rs/cli/src/plugin_cmd.rs
-index 73f8a1d..0ff1d3b 100644
+index e82200b..e99ce84 100644
 --- a/codex-rs/cli/src/plugin_cmd.rs
 +++ b/codex-rs/cli/src/plugin_cmd.rs
-@@ -583,7 +583,7 @@ struct PluginCommandContext {
+@@ -731,7 +731,7 @@ struct PluginCommandContext {
  async fn load_plugin_command_context(
      overrides: Vec<(String, toml::Value)>,
  ) -> Result<PluginCommandContext> {
@@ -794,10 +795,10 @@ index dbad3c3..c4a7b53 100644
  }
  
 diff --git a/codex-rs/cli/tests/marketplace_upgrade.rs b/codex-rs/cli/tests/marketplace_upgrade.rs
-index a2cf11f..392a89a 100644
+index bfc21b2..0017875 100644
 --- a/codex-rs/cli/tests/marketplace_upgrade.rs
 +++ b/codex-rs/cli/tests/marketplace_upgrade.rs
-@@ -7,7 +7,7 @@ use tempfile::TempDir;
+@@ -9,7 +9,7 @@ use tempfile::TempDir;
  
  fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
      let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
@@ -833,10 +834,10 @@ index 175ff03..0aa1a3f 100644
  }
  
 diff --git a/codex-rs/cli/tests/plugin_cli.rs b/codex-rs/cli/tests/plugin_cli.rs
-index c504ff9..63dddb6 100644
+index b1c3168..2317152 100644
 --- a/codex-rs/cli/tests/plugin_cli.rs
 +++ b/codex-rs/cli/tests/plugin_cli.rs
-@@ -23,7 +23,7 @@ fn marketplace_list_row(marketplace_name: &str, root: &Path) -> String {
+@@ -42,7 +42,7 @@ fn marketplace_list_row(marketplace_name: &str, root: &Path) -> String {
  
  fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
      let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
@@ -845,6 +846,15 @@ index c504ff9..63dddb6 100644
      cmd.env("HOME", codex_home);
      Ok(cmd)
  }
+@@ -1234,7 +1234,7 @@ impl RemoteMarketplaceFixture {
+     async fn run(&self, args: &[&str]) -> Result<Output> {
+         Ok(Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+             .current_dir(self.home.path())
+-            .env("CODEX_HOME", self.home.path())
++            .env("MESHAGENT_CODEX_HOME", self.home.path())
+             .env("HOME", self.home.path())
+             .env_remove("OPENAI_API_KEY")
+             .env_remove("CODEX_API_KEY")
 diff --git a/codex-rs/cli/tests/queue.rs b/codex-rs/cli/tests/queue.rs
 index 4275ed7..497b224 100644
 --- a/codex-rs/cli/tests/queue.rs
@@ -924,6 +934,19 @@ index cf1742c..ec604f2 100644
      Ok(cmd)
  }
  
+diff --git a/codex-rs/core/tests/suite/mcp_oauth_refresh_tests.rs b/codex-rs/core/tests/suite/mcp_oauth_refresh_tests.rs
+index 36a7139..70f8e48 100644
+--- a/codex-rs/core/tests/suite/mcp_oauth_refresh_tests.rs
++++ b/codex-rs/core/tests/suite/mcp_oauth_refresh_tests.rs
+@@ -58,7 +58,7 @@ async fn oauth_mode_refresh_replaces_the_live_connection(
+         "environment_id": DEFAULT_MCP_SERVER_ENVIRONMENT_ID,
+     }))?;
+     let home = Arc::new(tempfile::tempdir()?);
+-    let _codex_home_guard = EnvVarGuard::set("CODEX_HOME", home.path().as_os_str());
++    let _codex_home_guard = EnvVarGuard::set("MESHAGENT_CODEX_HOME", home.path().as_os_str());
+     write_fallback_oauth_tokens(
+         server_config.oauth_credential_name(server_name).as_ref(),
+         &server_url,
 diff --git a/codex-rs/test-binary-support/lib.rs b/codex-rs/test-binary-support/lib.rs
 index 4adefbc..d8ec4c7 100644
 --- a/codex-rs/test-binary-support/lib.rs
@@ -955,10 +978,10 @@ index 4adefbc..d8ec4c7 100644
              }
  
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index 5cbf403..7c3217b 100644
+index 36852ab..58973a5 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
-@@ -380,7 +380,8 @@ fn websocket_url_supports_auth_token(parsed: &Url) -> bool {
+@@ -381,7 +381,8 @@ fn websocket_url_supports_auth_token(parsed: &Url) -> bool {
  pub fn resolve_remote_addr(addr: &str) -> color_eyre::Result<RemoteAppServerEndpoint> {
      if let Some(socket_path) = addr.strip_prefix("unix://") {
          let socket_path = if socket_path.is_empty() {
@@ -968,7 +991,7 @@ index 5cbf403..7c3217b 100644
              codex_app_server_client::app_server_control_socket_path(&codex_home)
                  .map_err(color_eyre::Report::new)?
          } else {
-@@ -2496,7 +2497,7 @@ mod tests {
+@@ -2497,7 +2498,7 @@ mod tests {
  
      #[test]
      fn resolve_remote_addr_accepts_default_socket() -> color_eyre::Result<()> {
@@ -1072,11 +1095,11 @@ index 726277c..0c7f731 100644
          assert!(!should_delay_startup_composer_for_first_login(
              &codex_home,
 diff --git a/codex-rs/tui/tests/suite/focus_palette.rs b/codex-rs/tui/tests/suite/focus_palette.rs
-index 309f4eb..a2669d9 100644
+index fccb840..cf8a7e1 100644
 --- a/codex-rs/tui/tests/suite/focus_palette.rs
 +++ b/codex-rs/tui/tests/suite/focus_palette.rs
-@@ -99,7 +99,7 @@ impl PtyCodex {
-             .arg("analytics.enabled=false")
+@@ -97,7 +97,7 @@ impl PtyCodex {
+             .arg(repo_root)
              .env("TERM", "xterm-256color")
              .env("OPENAI_API_KEY", "focus-palette-test")
 -            .env("CODEX_HOME", codex_home.path())

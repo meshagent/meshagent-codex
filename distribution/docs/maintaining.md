@@ -28,7 +28,7 @@ still under review. Every patch must:
 
 The initial patch changes distribution identity and the default state root:
 
-- Cargo version `0.152.1-meshagent.1`;
+- Cargo version `0.153.4-meshagent.1`;
 - CLI branding, help, and legal attribution;
 - TUI product name and snapshots; and
 - the default configuration root from `~/.codex` to `~/.meshagent/codex`.

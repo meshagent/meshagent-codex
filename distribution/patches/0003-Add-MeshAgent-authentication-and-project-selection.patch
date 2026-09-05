@@ -1,4 +1,4 @@
-From 6e9b232198e6b70d76566fe5abdf62bfe97112c2 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: MeshAgent Codex Build <codex-build@meshagent.com>
 Date: Wed, 2 Sep 2026 19:40:18 -0700
 Subject: [PATCH] Add MeshAgent authentication and project selection
@@ -563,7 +563,7 @@ index 22e607c..37d01d1 100644
  
  async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config {
 diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
-index dde0af3..c263eee 100644
+index bac3e43..e312772 100644
 --- a/codex-rs/cli/src/main.rs
 +++ b/codex-rs/cli/src/main.rs
 @@ -1,6 +1,7 @@
@@ -824,7 +824,7 @@ index dde0af3..c263eee 100644
          Some(Subcommand::Completion(_)) => Some("completion"),
          Some(Subcommand::Update) => Some("update"),
          Some(Subcommand::Cloud(_)) => Some("cloud"),
-@@ -4920,6 +5048,50 @@ mod tests {
+@@ -4945,6 +5073,50 @@ mod tests {
          );
      }
  
@@ -1174,10 +1174,10 @@ index 5bd589d..852fe68 100644
      .success()
      .stderr(contains("Successfully logged in"));
 diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
-index 44a0411..820f912 100644
+index dca329a..9b39b78 100644
 --- a/codex-rs/core/src/config/mod.rs
 +++ b/codex-rs/core/src/config/mod.rs
-@@ -288,6 +288,7 @@ pub(crate) async fn test_config() -> Config {
+@@ -289,6 +289,7 @@ pub(crate) async fn test_config() -> Config {
      Config::load_from_base_config_with_overrides(
          ConfigToml {
              model: Some("gpt-5.5".to_string()),
@@ -1185,7 +1185,7 @@ index 44a0411..820f912 100644
              ..Default::default()
          },
          ConfigOverrides::default(),
-@@ -3712,7 +3713,7 @@ impl Config {
+@@ -3721,7 +3722,7 @@ impl Config {
  
          let model_provider_id = model_provider
              .or(cfg.model_provider)
@@ -1195,10 +1195,10 @@ index 44a0411..820f912 100644
              .get(&model_provider_id)
              .ok_or_else(|| {
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index e962382..c31a76d 100644
+index b5931b3..21edb11 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -4913,6 +4913,7 @@ async fn build_test_config(codex_home: &Path) -> Config {
+@@ -4989,6 +4989,7 @@ async fn build_test_config(codex_home: &Path) -> Config {
          .codex_home(codex_home.to_path_buf())
          .harness_overrides(ConfigOverrides {
              model: Some("gpt-5.5".to_string()),
@@ -2823,7 +2823,7 @@ index 0000000..0b2ef91
 +    "Bearer".to_string()
 +}
 diff --git a/codex-rs/model-provider-info/src/lib.rs b/codex-rs/model-provider-info/src/lib.rs
-index 65e2e4c..00e52e1 100644
+index 3fb3e87..d65e24e 100644
 --- a/codex-rs/model-provider-info/src/lib.rs
 +++ b/codex-rs/model-provider-info/src/lib.rs
 @@ -38,6 +38,9 @@ const OPENAI_PROVIDER_NAME: &str = "OpenAI";
@@ -2836,7 +2836,7 @@ index 65e2e4c..00e52e1 100644
  const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
  pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
  const AMAZON_BEDROCK_RUNTIME_PROVIDER_NAME: &str = "Amazon Bedrock Runtime";
-@@ -420,6 +423,29 @@ impl ModelProviderInfo {
+@@ -421,6 +424,29 @@ impl ModelProviderInfo {
          }
      }
  
@@ -2866,7 +2866,7 @@ index 65e2e4c..00e52e1 100644
      pub fn create_amazon_bedrock_provider(
          aws: Option<ModelProviderAwsAuthInfo>,
      ) -> ModelProviderInfo {
-@@ -468,6 +494,10 @@ impl ModelProviderInfo {
+@@ -469,6 +495,10 @@ impl ModelProviderInfo {
          self.name == OPENAI_PROVIDER_NAME
      }
  
@@ -2877,7 +2877,7 @@ index 65e2e4c..00e52e1 100644
      pub fn supports_codex_backend_routes(&self) -> bool {
          self.is_openai()
              && self.base_url.as_deref().is_none_or(|base_url| {
-@@ -513,6 +543,7 @@ pub fn built_in_model_providers(
+@@ -514,6 +544,7 @@ pub fn built_in_model_providers(
  ) -> HashMap<String, ModelProviderInfo> {
      use ModelProviderInfo as P;
      let openai_provider = P::create_openai_provider(openai_base_url);
@@ -2885,7 +2885,7 @@ index 65e2e4c..00e52e1 100644
      let amazon_bedrock_provider = P::create_amazon_bedrock_provider(/*aws*/ None);
      let amazon_bedrock_runtime_provider =
          P::create_amazon_bedrock_runtime_provider(/*aws*/ None);
-@@ -523,6 +554,7 @@ pub fn built_in_model_providers(
+@@ -524,6 +555,7 @@ pub fn built_in_model_providers(
      // `model_providers` in config.toml to add their own providers.
      [
          (OPENAI_PROVIDER_ID, openai_provider),
@@ -2953,7 +2953,7 @@ index 4ccb5b7..18e14a6 100644
          Box::pin(OpenAiModelsEndpoint::uses_codex_backend(self))
      }
 diff --git a/codex-rs/model-provider/src/provider.rs b/codex-rs/model-provider/src/provider.rs
-index 198cd63..4ad1242 100644
+index 027850b..383499f 100644
 --- a/codex-rs/model-provider/src/provider.rs
 +++ b/codex-rs/model-provider/src/provider.rs
 @@ -14,6 +14,7 @@ use codex_login::CodexAuth;
@@ -3042,7 +3042,7 @@ index 198cd63..4ad1242 100644
      fn models_manager(
          &self,
          codex_home: PathBuf,
-@@ -1206,4 +1271,23 @@ mod tests {
+@@ -1210,4 +1275,23 @@ mod tests {
                  .any(|model| model.slug == "provider-model")
          );
      }
@@ -3094,7 +3094,7 @@ index 45835c3..396d82d 100644
  
      async fn get_etag(&self) -> Option<String> {
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 055612e..5220b5a 100644
+index d2ea7c5..ea00223 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -20,6 +20,7 @@ use crate::session_resume::cwds_differ;
@@ -3105,7 +3105,7 @@ index 055612e..5220b5a 100644
  
  const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
  
-@@ -49,6 +50,20 @@ impl App {
+@@ -62,6 +63,20 @@ impl App {
          }
  
          match event {
@@ -3126,7 +3126,7 @@ index 055612e..5220b5a 100644
              AppEvent::SkillsListLoaded { ref cwd, .. }
              | AppEvent::PluginMentionsLoaded { ref cwd, .. }
                  if cwds_differ(cwd, self.config.cwd.as_path()) => {}
-@@ -692,19 +707,33 @@ impl App {
+@@ -705,19 +720,33 @@ impl App {
                      }
                  }
              },
@@ -3173,7 +3173,7 @@ index 055612e..5220b5a 100644
                  return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
              }
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index bb5b57a..b25c272 100644
+index 1592aef..725deb8 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -37,6 +37,7 @@ use codex_app_server_protocol::ThreadGoalStatus;
@@ -3184,7 +3184,7 @@ index bb5b57a..b25c272 100644
  use codex_message_history::HistoryBatchCursor;
  use codex_protocol::ThreadId;
  use codex_protocol::openai_models::ModelPreset;
-@@ -216,6 +217,16 @@ pub(crate) enum RecapTrigger {
+@@ -222,6 +223,16 @@ pub(crate) struct AgentsOverviewThreadRefresh {
  #[allow(clippy::large_enum_variant)]
  #[derive(Debug, IntoStaticStr)]
  pub(crate) enum AppEvent {
@@ -3198,7 +3198,7 @@ index bb5b57a..b25c272 100644
 +        project_name: String,
 +        result: Result<(), String>,
 +    },
-     /// Open the daemon-wide overview of loaded root sessions.
+     /// Open the daemon-wide overview of recent and locally retained root sessions.
      OpenAgentsOverview,
      /// Update the daemon-wide overview after a background thread listing finishes.
 diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
@@ -3214,10 +3214,10 @@ index 8bbb689..57d753f 100644
  /permissions - choose what Codex is allowed to do
  /keymap - remap TUI shortcuts
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 4b601e5..22584b2 100644
+index 40eadfa..c47c657 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
-@@ -387,6 +387,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
+@@ -388,6 +388,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
  mod model_popup_state;
  mod model_popups;
  mod notifications;
@@ -3340,10 +3340,10 @@ index 0000000..326390c
 +    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-index 89a08b7..6edc993 100644
+index 7f2028f..7338058 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 +++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-@@ -298,6 +298,9 @@ impl ChatWidget {
+@@ -297,6 +297,9 @@ impl ChatWidget {
                  self.open_model_popup();
                  self.defer_input_until_settings_applied();
              }
@@ -3353,7 +3353,7 @@ index 89a08b7..6edc993 100644
              SlashCommand::Personality => {
                  self.open_personality_popup();
                  self.defer_input_until_settings_applied();
-@@ -1170,6 +1173,7 @@ impl ChatWidget {
+@@ -1169,6 +1172,7 @@ impl ChatWidget {
              | SlashCommand::Compact
              | SlashCommand::Review
              | SlashCommand::Model
@@ -3362,13 +3362,13 @@ index 89a08b7..6edc993 100644
              | SlashCommand::Plan
              | SlashCommand::Goal
 diff --git a/codex-rs/tui/src/chatwidget/tests/helpers.rs b/codex-rs/tui/src/chatwidget/tests/helpers.rs
-index 33c46c3..281afa3 100644
+index c852995..2ba4adb 100644
 --- a/codex-rs/tui/src/chatwidget/tests/helpers.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/helpers.rs
-@@ -15,6 +15,9 @@ pub(super) async fn test_config() -> Config {
-         Config::load_default_with_cli_overrides_for_codex_home(codex_home.clone(), Vec::new())
-             .await
+@@ -17,6 +17,9 @@ pub(super) async fn test_config() -> Config {
              .expect("config");
+     // Keep generic UI snapshots stable when the bundled catalog default changes.
+     config.model = Some("gpt-5.6-sol".to_string());
 +    config.model_provider =
 +        codex_model_provider_info::built_in_model_providers(/*openai_base_url*/ None)["openai"]
 +            .clone();
@@ -3433,10 +3433,10 @@ index f0cb0be..a9e3ca6 100644
  async fn marketplace_upgrade_loading_popup_snapshot() {
      let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index 7c3217b..7e1cafb 100644
+index 58973a5..526a6e0 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
-@@ -55,6 +55,7 @@ use codex_login::default_client::originator;
+@@ -56,6 +56,7 @@ use codex_login::default_client::originator;
  use codex_login::default_client::set_default_client_residency_requirement;
  use codex_login::enforce_login_restrictions;
  use codex_login::is_workload_identity_selected;
@@ -3444,7 +3444,7 @@ index 7c3217b..7e1cafb 100644
  use codex_protocol::ThreadId;
  use codex_protocol::auth::AuthMode;
  use codex_protocol::config_types::AltScreenMode;
-@@ -1122,6 +1123,20 @@ async fn run_ratatui_app(
+@@ -1123,6 +1124,20 @@ async fn run_ratatui_app(
      let startup_model_provider = initial_config.model_provider_id.clone();
      let (login_status, mut startup_account) = if workload_identity_selected {
          (LoginStatus::AuthMode(AuthMode::Chatgpt), None)
@@ -3465,7 +3465,7 @@ index 7c3217b..7e1cafb 100644
      } else if initial_config.model_provider.requires_openai_auth {
          let Some(active_app_server) = app_server.as_mut() else {
              unreachable!("app server should exist when auth is required");
-@@ -1936,7 +1951,7 @@ fn should_show_onboarding(
+@@ -1937,7 +1952,7 @@ fn should_show_onboarding(
  fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool {
      // Only show the login screen for providers that actually require OpenAI auth
      // (OpenAI or equivalents). For OSS/other providers, skip login entirely.
@@ -3474,7 +3474,7 @@ index 7c3217b..7e1cafb 100644
          return false;
      }
  
-@@ -2002,15 +2017,15 @@ mod tests {
+@@ -2003,15 +2018,15 @@ mod tests {
                  false,
              ),
              (
@@ -4036,7 +4036,7 @@ index aab133f..2f1083b 100644
  
      #[test]
 diff --git a/codex-rs/tui/src/status/tests.rs b/codex-rs/tui/src/status/tests.rs
-index 161bbf4..4ef3ce7 100644
+index 1515fb8..d8f3fe1 100644
 --- a/codex-rs/tui/src/status/tests.rs
 +++ b/codex-rs/tui/src/status/tests.rs
 @@ -133,6 +133,10 @@ fn app_server_workspace_write_profile(network_enabled: bool) -> PermissionProfil

@@ -17,9 +17,9 @@ repository. Do not copy a materialized OpenAI Codex checkout into this tree.
 
 ## Current distribution
 
-- Upstream: `openai/codex` tag `rust-v0.152.1`
-- Upstream commit: `5adb68a49933ae446bf11935662c83dba55a0804`
-- Distribution version: `0.152.1-meshagent.1`
+- Upstream: `openai/codex` tag `rust-v0.153.4`
+- Upstream commit: `3d2ee51ca2d5db578f328aa75e20aa22c0197c9a`
+- Distribution version: `0.153.4-meshagent.1`
 - Default state directory: `~/.meshagent/codex`
 - Installed command name: `codex`
 

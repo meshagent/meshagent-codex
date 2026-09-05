@@ -306,11 +306,11 @@ case "$command_name" in
     run_tests -p codex-tui
     run_tests -p codex-windows-sandbox
     binary="$(build_distribution)"
-    "$binary" --version | grep -F "codex $distribution_version" >/dev/null
+    "$binary" --version | grep -Fx "codex-cli $distribution_version" >/dev/null
     "$binary" --help | grep -F "MeshAgent Codex is maintained by MeshAgent" >/dev/null
     "$binary" --help | grep -F '~/.meshagent/codex/config.toml' >/dev/null
     managed_binary="$(install_managed_binary "$binary" "$(ensure_materialized)/dist/verify-home")"
-    "$managed_binary" --version | grep -F "codex $distribution_version" >/dev/null
+    "$managed_binary" --version | grep -Fx "codex-cli $distribution_version" >/dev/null
     printf 'verified: %s\n' "$binary"
     ;;
   help|-h|--help)
