@@ -1,0 +1,2 @@
+# Keep shell scripts, patch names, and patch contents stable on Windows.
+* text eol=lf
