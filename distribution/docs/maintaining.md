@@ -119,6 +119,17 @@ retain the visible statement that MeshAgent Codex is based on OpenAI Codex but
 is not an official OpenAI distribution. Have counsel review trademark and
 distribution requirements before public release.
 
+On Windows, check MeshAgent authentication against the built CLI with:
+
+```powershell
+$env:RUN_MESHAGENT_CLOUD_SMOKE = "1"
+python smoke-windows-auth.py C:\path\to\codex.exe
+```
+
+The check removes `HOME` and uses an empty temporary `USERPROFILE`.
+Authentication must resolve the native Windows home directory and report that
+the user is signed out. Version and help checks alone do not exercise this path.
+
 Managed enterprise policy belongs in deployment/configuration layers, not in a
 customer-specific source patch. Keep credentials and organization identifiers
 out of this overlay.

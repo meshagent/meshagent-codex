@@ -4,4 +4,4 @@ tag = "rust-v0.153.4"
 commit = "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a"
 source_subdirectory = "codex-rs"
 distribution_version = "0.153.4-meshagent.1"
-patchset = 8
+patchset = 9

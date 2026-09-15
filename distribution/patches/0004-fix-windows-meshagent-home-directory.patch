@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MeshAgent Codex Build <codex-build@meshagent.com>
+Date: Tue, 15 Sep 2026 11:26:36 -0700
+Subject: [PATCH] Resolve MeshAgent authentication home directory on Windows
+
+---
+ codex-rs/login/src/meshagent/mod.rs | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/codex-rs/login/src/meshagent/mod.rs b/codex-rs/login/src/meshagent/mod.rs
+index 530186e..5613e0d 100644
+--- a/codex-rs/login/src/meshagent/mod.rs
++++ b/codex-rs/login/src/meshagent/mod.rs
+@@ -53,9 +53,8 @@ impl ExternalAuth for MeshAgentAuth {
+ 
+ impl MeshAgentAuth {
+     pub fn from_environment() -> io::Result<Self> {
+-        let home = std::env::var_os("HOME")
+-            .map(PathBuf::from)
+-            .ok_or_else(|| io::Error::other("HOME is not set"))?;
++        let home = std::env::home_dir()
++            .ok_or_else(|| io::Error::other("could not determine home directory"))?;
+         Self::new(
+             home.join(".meshagent/settings.json"),
+             normalize_api_url(std::env::var("MESHAGENT_API_URL").ok().as_deref()),
