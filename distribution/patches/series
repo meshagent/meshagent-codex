@@ -1,3 +1,4 @@
 0001-brand-meshagent-codex-distribution.patch
 0002-isolate-meshagent-runtime-and-daemon.patch
 0003-Add-MeshAgent-authentication-and-project-selection.patch
+0004-fix-windows-meshagent-home-directory.patch

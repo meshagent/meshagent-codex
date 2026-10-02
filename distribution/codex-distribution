@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-overlay_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+overlay_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 lock_file="$overlay_dir/upstream.lock"
 series_file="$overlay_dir/patches/series"
 
@@ -126,16 +126,35 @@ staged_binary_path() {
 
 build_distribution() {
   local source source_binary host_binary destination host_destination target_root
+  local cli_only=false
+  local target="${CARGO_BUILD_TARGET:-}"
+  local -a cargo_args=(build --locked --release -p codex-cli --bin codex)
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cli-only) cli_only=true ;;
+      --target)
+        [[ $# -ge 2 && "$2" =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]] || \
+          die "--target requires a Rust target triple"
+        target="$2"
+        shift
+        ;;
+      *) die "usage: build [--cli-only] [--target <triple>]" ;;
+    esac
+    shift
+  done
+  if [[ "$cli_only" == false ]]; then
+    cargo_args+=(-p codex-code-mode-host --bin codex-code-mode-host)
+  fi
+  if [[ -n "$target" ]]; then cargo_args+=(--target "$target"); fi
   source="$(ensure_materialized)"
-  (cd "$source/codex-rs" && cargo build --locked --release \
-    -p codex-cli --bin codex \
-    -p codex-code-mode-host --bin codex-code-mode-host) || \
+  (cd "$source/codex-rs" && cargo "${cargo_args[@]}") || \
     die "failed to build Codex distribution executables"
 
   target_root="${CARGO_TARGET_DIR:-$source/codex-rs/target}"
   if [[ "$target_root" != /* ]]; then
     target_root="$source/codex-rs/$target_root"
   fi
+  if [[ -n "$target" ]]; then target_root="$target_root/$target"; fi
 
   if [[ -f "$target_root/release/codex.exe" ]]; then
     source_binary="$target_root/release/codex.exe"
@@ -145,12 +164,14 @@ build_distribution() {
     host_binary="$target_root/release/codex-code-mode-host"
   fi
   destination="$(staged_binary_path "$source" "$source_binary")"
-  host_destination="$(staged_binary_path "$source" "$host_binary")"
   mkdir -p "$source/dist"
-  cp "$source_binary" "$destination"
-  cp "$host_binary" "$host_destination"
+  cp "$source_binary" "$destination" || die "failed to stage Codex CLI"
   chmod 0755 "$destination"
-  chmod 0755 "$host_destination"
+  if [[ "$cli_only" == false ]]; then
+    host_destination="$(staged_binary_path "$source" "$host_binary")"
+    cp "$host_binary" "$host_destination" || die "failed to stage Codex Code Mode host"
+    chmod 0755 "$host_destination"
+  fi
   printf '%s\n' "$destination"
 }
 
@@ -203,9 +224,10 @@ Commands:
   format              Run upstream formatting in the materialized checkout
   check-format        Check Rust formatting
   check               Cargo-check the crates changed by the patch series
-  build               Build and stage the codex release binary
+  build [--cli-only] [--target <triple>]
+                      Build and stage the CLI and Code Mode host (or only the CLI)
   install-managed [home]
-                      Build and install the daemon-managed binary
+                      Build and install both daemon-managed binaries
   test-patched        Test all crates changed by the patch series
   test [arguments]    Run upstream tests and forward arguments to nextest
   run [arguments]     Run the debug CLI
@@ -255,16 +277,14 @@ case "$command_name" in
       -p codex-windows-sandbox
     ;;
   build)
-    build_distribution
+    build_distribution "$@"
     ;;
   install-managed)
     binary="$(build_distribution)"
     install_managed_binary "$binary" "${1:-}"
-    source="$(ensure_materialized)"
+    host_binary="$(dirname -- "$binary")/codex-code-mode-host"
     if [[ "$binary" == *.exe ]]; then
-      host_binary="$source/dist/codex-code-mode-host.exe"
-    else
-      host_binary="$source/dist/codex-code-mode-host"
+      host_binary+=.exe
     fi
     install_managed_binary "$host_binary" "${1:-}"
     ;;
@@ -308,6 +328,8 @@ case "$command_name" in
     binary="$(build_distribution)"
     "$binary" --version | grep -Fx "codex-cli $distribution_version" >/dev/null
     "$binary" --help | grep -F "MeshAgent Codex is maintained by MeshAgent" >/dev/null
+    # Match the literal default path shown in help, not this user's HOME.
+    # shellcheck disable=SC2088
     "$binary" --help | grep -F '~/.meshagent/codex/config.toml' >/dev/null
     managed_binary="$(install_managed_binary "$binary" "$(ensure_materialized)/dist/verify-home")"
     "$managed_binary" --version | grep -Fx "codex-cli $distribution_version" >/dev/null
