@@ -30,7 +30,7 @@ still under review. Every patch must:
 
 The initial patch changes distribution identity and the default state root:
 
-- Cargo version `0.153.4-meshagent.1`;
+- Cargo version `0.160.0-meshagent.1`;
 - CLI branding, help, and legal attribution;
 - TUI product name and snapshots; and
 - the default configuration root from `~/.codex` to `~/.meshagent/codex`.
@@ -44,8 +44,9 @@ The runtime-isolation patch makes the boundary explicit:
   names;
 - the daemon runs the managed `codex` executable without renaming any upstream
   commands; and
-- OpenAI's standalone updater is disabled so distribution updates remain under
-  MeshAgent packaging control.
+- OpenAI's startup update checks, standalone updater, `codex update`, and daemon
+  package updates are disabled so updates remain under MeshAgent packaging
+  control. Check for new installation and update entry points when rebasing.
 
 The MeshAgent authentication patch adds the distribution's provider behavior
 as one reviewable change:

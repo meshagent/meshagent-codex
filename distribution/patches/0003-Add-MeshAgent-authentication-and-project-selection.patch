@@ -1,17 +1,36 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: MeshAgent Codex Build <codex-build@meshagent.com>
-Date: Wed, 2 Sep 2026 19:40:18 -0700
+From: MeshAgent <engineering@meshagent.com>
+Date: Mon, 5 Oct 2026 10:32:12 -0700
 Subject: [PATCH] Add MeshAgent authentication and project selection
 
 ---
+ ...background__tests__configured_updater.snap |   6 +-
  codex-rs/cli/src/lib.rs                       |   8 +
  codex-rs/cli/src/login.rs                     | 414 +++++++++++++---
  codex-rs/cli/src/main.rs                      | 232 +++++++--
- codex-rs/cli/tests/debug_models.rs            |  62 +++
- codex-rs/cli/tests/login.rs                   | 156 +++++-
+ codex-rs/cli/tests/app_server_daemon.rs       | 105 ++--
+ codex-rs/cli/tests/daemon_startup.rs          |  25 +-
+ codex-rs/cli/tests/daemon_telemetry.rs        |   2 +-
+ codex-rs/cli/tests/debug_models.rs            |  68 ++-
+ codex-rs/cli/tests/doctor_path_safety.rs      |   4 +-
+ .../tests/exec_server/pid_namespace_tests.rs  |   2 +-
+ .../cli/tests/exec_server_websocket_auth.rs   |   8 +-
+ codex-rs/cli/tests/login.rs                   | 161 ++++++-
+ codex-rs/cli/tests/mcp_login.rs               |   4 +-
+ codex-rs/cli/tests/sandbox_tty.rs             |   2 +-
+ codex-rs/cli/tests/worktree.rs                |  42 +-
  codex-rs/core/src/config/mod.rs               |   3 +-
  codex-rs/core/src/session/tests.rs            |   1 +
- codex-rs/core/tests/common/lib.rs             |   6 +-
+ codex-rs/core/tests/common/Cargo.toml         |   1 +
+ codex-rs/core/tests/common/lib.rs             |  16 +
+ codex-rs/core/tests/common/test_codex_exec.rs |   2 +-
+ codex-rs/core/tests/suite/cli_stream.rs       |  23 +-
+ codex-rs/core/tests/suite/live_cli.rs         |   2 +-
+ codex-rs/core/tests/suite/model_overrides.rs  |   4 +-
+ .../tests/suite/multi_exec_server_sandbox.rs  |   2 +-
+ .../core/tests/suite/prompt_debug_tests.rs    |   1 +
+ codex-rs/core/tests/suite/rmcp_client.rs      |   2 +-
+ codex-rs/core/tests/suite/windows_sandbox.rs  |  10 +-
  codex-rs/login/MESHAGENT_AUTH_SPEC.md         | 121 +++++
  .../login/src/auth/default_client_tests.rs    |   2 +-
  codex-rs/login/src/auth/manager.rs            |  15 +-
@@ -20,25 +39,51 @@ Subject: [PATCH] Add MeshAgent authentication and project selection
  codex-rs/login/src/meshagent/mod.rs           | 184 +++++++
  codex-rs/login/src/meshagent/oauth.rs         | 454 ++++++++++++++++++
  codex-rs/login/src/meshagent/storage.rs       | 424 ++++++++++++++++
- codex-rs/model-provider-info/src/lib.rs       |  32 ++
+ codex-rs/model-provider-info/src/lib.rs       |  35 ++
  codex-rs/model-provider/src/auth.rs           |   5 +-
- .../model-provider/src/models_endpoint.rs     |  10 +-
- codex-rs/model-provider/src/provider.rs       |  84 ++++
- codex-rs/models-manager/src/manager.rs        |   9 +-
+ .../model-provider/src/models_endpoint.rs     |  15 +-
+ codex-rs/model-provider/src/provider.rs       |  90 +++-
+ codex-rs/models-manager/src/manager.rs        |   6 +
+ .../src/enterprise_oauth_login_tests.rs       |   4 +-
+ .../src/enterprise_oauth_logout_tests.rs      |   2 +-
+ .../rmcp-client/src/oauth/test_support.rs     |   4 +-
+ .../src/oauth/tests/store_lock_tests.rs       |   2 +-
+ .../tests/streamable_http_oauth_startup.rs    |  12 +-
+ .../streamable_http_oauth_store_pinning.rs    |   2 +-
+ .../tests/streamable_http_oauth_tool_call.rs  |   2 +-
+ .../tests/streamable_http_test_support.rs     |   2 +-
  codex-rs/tui/src/app/event_dispatch.rs        |  53 +-
+ .../src/app/experimental_features_tests.rs    |   7 +-
+ codex-rs/tui/src/app/tests.rs                 |   8 +-
+ .../tests/background_task_defaults_tests.rs   |   4 +-
+ codex-rs/tui/src/app/tests/daybreak_tests.rs  |   5 +-
+ .../app/tests/fork_workspace_roots_tests.rs   |   2 +-
+ .../tui/src/app/tests/security_setup_tests.rs |   5 +-
+ ...daemon_command_center_vanished_rename.snap |   2 +-
+ .../src/app/tests/startup_defaults_tests.rs   |  22 +-
+ .../tui/src/app/tests/startup_frame_tests.rs  |   2 +-
  codex-rs/tui/src/app_event.rs                 |  11 +
- ...p__tests__command_popup_default_items.snap |   1 +
+ codex-rs/tui/src/app_server_session.rs        |   5 +
+ .../prompt_history_tests.rs                   |   4 +
+ .../rollout_history_tests.rs                  |   6 +-
  codex-rs/tui/src/chatwidget.rs                |   1 +
  codex-rs/tui/src/chatwidget/project_popup.rs  | 108 +++++
  codex-rs/tui/src/chatwidget/slash_dispatch.rs |   4 +
- codex-rs/tui/src/chatwidget/tests/helpers.rs  |   3 +
- .../chatwidget/tests/popups_and_settings.rs   |  39 ++
- codex-rs/tui/src/lib.rs                       |  27 +-
+ codex-rs/tui/src/chatwidget/tests/helpers.rs  |   9 +
+ .../chatwidget/tests/popups_and_settings.rs   |  40 ++
+ codex-rs/tui/src/config_update_tests.rs       |   2 +-
+ codex-rs/tui/src/dynamic_tools_tests.rs       |   4 +
+ codex-rs/tui/src/lib.rs                       |  53 +-
  codex-rs/tui/src/onboarding/auth.rs           | 298 +++++++++++-
  .../tui/src/onboarding/onboarding_screen.rs   |  15 +-
+ codex-rs/tui/src/session_start_tests.rs       |   4 +
  codex-rs/tui/src/slash_command.rs             |  10 +
- codex-rs/tui/src/status/tests.rs              |   9 +
- 34 files changed, 2996 insertions(+), 127 deletions(-)
+ codex-rs/tui/src/status/tests.rs              |   9 +-
+ codex-rs/tui/src/updates.rs                   |  12 +-
+ .../tui/tests/suite/external_editor_tests.rs  |   2 +-
+ codex-rs/tui/tests/suite/provider_defaults.rs |   2 +-
+ ...us_palette__daemon_auto_start_failure.snap |   3 +-
+ 79 files changed, 3257 insertions(+), 308 deletions(-)
  create mode 100644 codex-rs/login/MESHAGENT_AUTH_SPEC.md
  create mode 100644 codex-rs/login/src/meshagent/meshagent_tests.rs
  create mode 100644 codex-rs/login/src/meshagent/mod.rs
@@ -46,6 +91,22 @@ Subject: [PATCH] Add MeshAgent authentication and project selection
  create mode 100644 codex-rs/login/src/meshagent/storage.rs
  create mode 100644 codex-rs/tui/src/chatwidget/project_popup.rs
 
+diff --git a/codex-rs/cli/src/doctor/snapshots/codex__doctor__background__tests__configured_updater.snap b/codex-rs/cli/src/doctor/snapshots/codex__doctor__background__tests__configured_updater.snap
+index 478f044..ce0718a 100644
+--- a/codex-rs/cli/src/doctor/snapshots/codex__doctor__background__tests__configured_updater.snap
++++ b/codex-rs/cli/src/doctor/snapshots/codex__doctor__background__tests__configured_updater.snap
+@@ -2,8 +2,8 @@
+ source: cli/src/doctor/background.rs
+ expression: details
+ ---
+-update-loop pid file: CODEX_HOME/app-server-daemon/app-server-updater.pid (missing)
+-dedicated pid file: CODEX_HOME/app-server-daemon/daemon.pid (missing)
+-dedicated update-loop pid file: CODEX_HOME/app-server-daemon/daemon-updater.pid (missing)
++update-loop pid file: CODEX_HOME/codex-app-server-daemon/app-server-updater.pid (missing)
++dedicated pid file: CODEX_HOME/codex-app-server-daemon/daemon.pid (missing)
++dedicated update-loop pid file: CODEX_HOME/codex-app-server-daemon/daemon-updater.pid (missing)
+ automatic updates: disabled (configured)
+ update interval: 90 minutes (configured)
 diff --git a/codex-rs/cli/src/lib.rs b/codex-rs/cli/src/lib.rs
 index 75f553a..5ec4aad 100644
 --- a/codex-rs/cli/src/lib.rs
@@ -563,7 +624,7 @@ index 22e607c..37d01d1 100644
  
  async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config {
 diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
-index bac3e43..e312772 100644
+index 7e8f038..4789b0f 100644
 --- a/codex-rs/cli/src/main.rs
 +++ b/codex-rs/cli/src/main.rs
 @@ -1,6 +1,7 @@
@@ -591,10 +652,10 @@ index bac3e43..e312772 100644
 +use codex_cli::run_meshagent_account_switch;
 +use codex_cli::run_meshagent_project_activate;
 +use codex_cli::run_meshagent_project_list;
- use codex_cloud_config::cloud_config_bundle_loader_for_storage;
  use codex_cloud_tasks::Cli as CloudTasksCli;
  use codex_exec::Cli as ExecCli;
-@@ -145,6 +154,9 @@ enum Subcommand {
+ use codex_exec::Command as ExecCommand;
+@@ -159,6 +168,9 @@ enum Subcommand {
      /// Remove stored authentication credentials.
      Logout(LogoutCommand),
  
@@ -604,7 +665,7 @@ index bac3e43..e312772 100644
      /// Manage external MCP servers for Codex.
      Mcp(McpCli),
  
-@@ -491,6 +503,14 @@ struct LoginCommand {
+@@ -498,6 +510,14 @@ struct LoginCommand {
      #[clap(skip)]
      config_overrides: CliConfigOverrides,
  
@@ -619,7 +680,7 @@ index bac3e43..e312772 100644
      #[arg(
          long = "with-api-key",
          help = "Read the API key from stdin (e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`)"
-@@ -532,13 +552,60 @@ struct LoginCommand {
+@@ -539,13 +559,60 @@ struct LoginCommand {
  #[derive(Debug, clap::Subcommand)]
  enum LoginSubcommand {
      /// Show login status.
@@ -681,7 +742,7 @@ index bac3e43..e312772 100644
  }
  
  #[derive(Debug, Parser)]
-@@ -1522,37 +1589,80 @@ async fn cli_main(
+@@ -1570,37 +1637,80 @@ async fn cli_main(
                  root_config_overrides.clone(),
              );
              match login_cli.action {
@@ -730,11 +791,11 @@ index bac3e43..e312772 100644
 +                    if matches!(login_cli.provider, Some(LoginProvider::Openai)) {
 +                        eprintln!("Account switching is only supported for MeshAgent.");
 +                        std::process::exit(2);
-+                    }
+                     }
 +                    if login_cli.api_url.is_some() {
 +                        eprintln!("--api-url is only valid when logging in to MeshAgent.");
 +                        std::process::exit(2);
-                     }
++                    }
 +                    run_meshagent_account_switch(switch.account);
                  }
 +                None => match login_cli.provider.unwrap_or(LoginProvider::Meshagent) {
@@ -790,7 +851,7 @@ index bac3e43..e312772 100644
              }
          }
          Some(Subcommand::Logout(mut logout_cli)) => {
-@@ -1565,7 +1675,24 @@ async fn cli_main(
+@@ -1613,7 +1723,24 @@ async fn cli_main(
                  &mut logout_cli.config_overrides,
                  root_config_overrides.clone(),
              );
@@ -816,7 +877,7 @@ index bac3e43..e312772 100644
          }
          Some(Subcommand::Completion(completion_cli)) => {
              reject_remote_mode_for_subcommand(
-@@ -2434,6 +2561,7 @@ fn unsupported_subcommand_name_for_strict_config(
+@@ -2262,6 +2389,7 @@ fn unsupported_subcommand_name_for_strict_config(
          Some(Subcommand::App(_)) => Some("app"),
          Some(Subcommand::Login(_)) => Some("login"),
          Some(Subcommand::Logout(_)) => Some("logout"),
@@ -824,7 +885,7 @@ index bac3e43..e312772 100644
          Some(Subcommand::Completion(_)) => Some("completion"),
          Some(Subcommand::Update) => Some("update"),
          Some(Subcommand::Cloud(_)) => Some("cloud"),
-@@ -4945,6 +5073,50 @@ mod tests {
+@@ -4901,6 +5029,50 @@ mod tests {
          );
      }
  
@@ -875,14 +936,446 @@ index bac3e43..e312772 100644
      fn strict_config_feature_toggle_error(args: &[&str]) -> anyhow::Error {
          let cli_args = std::iter::once("codex")
              .chain(std::iter::once("--strict-config"))
+diff --git a/codex-rs/cli/tests/app_server_daemon.rs b/codex-rs/cli/tests/app_server_daemon.rs
+index 002012a..24b32bd 100644
+--- a/codex-rs/cli/tests/app_server_daemon.rs
++++ b/codex-rs/cli/tests/app_server_daemon.rs
+@@ -24,6 +24,10 @@ struct TestDaemon {
+ impl TestDaemon {
+     fn new() -> Result<Self> {
+         let home = tempfile::Builder::new().tempdir_in("/tmp")?;
++        std::fs::write(
++            home.path().join("config.toml"),
++            "model_provider = \"openai\"\n",
++        )?;
+         let codex = codex_utils_cargo_bin::cargo_bin("codex")?;
+         let codex_source = std::fs::canonicalize(&codex)?;
+         let target = if cfg!(target_os = "macos") {
+@@ -36,7 +40,7 @@ impl TestDaemon {
+         let managed = standalone
+             .join("releases")
+             .join(&release_name)
+-            .join("bin/codex");
++            .join("codex");
+         std::fs::create_dir_all(managed.parent().context("managed bin parent")?)?;
+         // Preserve the installed path without invalidating the shared CLI's Rosetta cache.
+         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+@@ -45,7 +49,7 @@ impl TestDaemon {
+             // Translate the fixture before timed daemon capability and readiness checks.
+             ensure!(
+                 Command::new(&managed)
+-                    .env("CODEX_HOME", home.path())
++                    .env("MESHAGENT_CODEX_HOME", home.path())
+                     .arg("--version")
+                     .output()?
+                     .status
+@@ -63,7 +67,7 @@ impl TestDaemon {
+             standalone.join("current"),
+         )?;
+         // Model a daemon that was previously launched and is currently stopped.
+-        let state = home.path().join("app-server-daemon");
++        let state = home.path().join("codex-app-server-daemon");
+         std::fs::create_dir(&state)?;
+         std::fs::write(state.join("app-server.stderr.log"), b"")?;
+         Ok(Self {
+@@ -75,7 +79,7 @@ impl TestDaemon {
+ 
+     fn command(&self) -> Command {
+         let mut command = Command::new(&self.codex);
+-        command.env("CODEX_HOME", self.home.path());
++        command.env("MESHAGENT_CODEX_HOME", self.home.path());
+         command
+     }
+ 
+@@ -93,7 +97,7 @@ impl TestDaemon {
+     }
+ 
+     fn pid(&self, name: &str) -> Result<u32> {
+-        let record = std::fs::read(self.home.path().join("app-server-daemon").join(name))
++        let record = std::fs::read(self.home.path().join("codex-app-server-daemon").join(name))
+             .with_context(|| format!("failed to read {name}"))?;
+         Ok(serde_json::from_slice::<Value>(&record)?["pid"]
+             .as_u64()
+@@ -145,8 +149,10 @@ fn wait_for_exit(pid: u32) -> Result<()> {
+ fn managed_identity_survives_locale_and_timezone_changes() -> Result<()> {
+     let daemon = TestDaemon::new()?;
+     let mut original = Vec::new();
+-    let mut updater_pid = 0;
+-    let pid_file = daemon.home.path().join("app-server-daemon/app-server.pid");
++    let pid_file = daemon
++        .home
++        .path()
++        .join("codex-app-server-daemon/app-server.pid");
+     for (action, locale, timezone, expected_status) in [
+         ("start", "C", "UTC0", "started"),
+         ("version", "en_AU.UTF-8", "PST8PDT", "running"),
+@@ -167,7 +173,6 @@ fn managed_identity_survives_locale_and_timezone_changes() -> Result<()> {
+         let output: Value = serde_json::from_slice(&output.stdout)?;
+         assert_eq!(output["status"], expected_status);
+         if action == "start" {
+-            updater_pid = daemon.pid("app-server-updater.pid")?;
+             original = std::fs::read(&pid_file)?;
+             let record: Value = serde_json::from_slice(&original)?;
+             assert!(record["processIdentity"].is_object());
+@@ -189,19 +194,8 @@ fn managed_identity_survives_locale_and_timezone_changes() -> Result<()> {
+             );
+         } else if action == "version" {
+             assert_eq!(output["backend"], "pid");
+-            assert_eq!(daemon.pid("app-server-updater.pid")?, updater_pid);
+             assert_eq!(std::fs::read(&pid_file)?, original);
+ 
+-            // Finish startup promotion before deliberately restoring a legacy record.
+-            let updater_socket = daemon
+-                .home
+-                .path()
+-                .join("app-server-daemon/app-server-updater.sock");
+-            let deadline = Instant::now() + Duration::from_secs(30);
+-            while !updater_socket.exists() {
+-                ensure!(Instant::now() < deadline, "updater did not become ready");
+-                std::thread::sleep(Duration::from_millis(50));
+-            }
+             let mut legacy: Value = serde_json::from_slice(&original)?;
+             legacy
+                 .as_object_mut()
+@@ -225,9 +219,6 @@ fn managed_identity_survives_locale_and_timezone_changes() -> Result<()> {
+                 String::from_utf8(result.stderr)?.replace(&legacy["pid"].to_string(), "[PID]");
+             insta::assert_snapshot!(stderr, @"Error: cannot verify pid-managed process [PID]: legacy start time changed; PID record retained. Retry with the locale and timezone used to start the daemon. If the system clock changed, stop the original process before restarting the daemon");
+         }
+-        if action == "restart" {
+-            assert_eq!(daemon.pid("app-server-updater.pid")?, updater_pid);
+-        }
+     }
+     assert!(!pid_file.exists());
+     Ok(())
+@@ -250,13 +241,14 @@ fn package_ownership_check_does_not_start_an_updater() -> Result<()> {
+         "ownership check failed: {}",
+         String::from_utf8_lossy(&output.stderr)
+     );
+-    let state = daemon.home.path().join("app-server-daemon");
++    let state = daemon.home.path().join("codex-app-server-daemon");
+     assert!(!state.join("app-server-updater.pid").exists());
+     assert!(!state.join("daemon-updater.pid").exists());
+     Ok(())
+ }
+ 
+ #[test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ fn managed_starts_ensure_one_updater_and_recover_a_missing_one() -> Result<()> {
+     let daemon = TestDaemon::new()?;
+     assert_eq!(daemon.lifecycle("start")?["status"], "started");
+@@ -271,7 +263,10 @@ fn managed_starts_ensure_one_updater_and_recover_a_missing_one() -> Result<()> {
+     signal(updater_pid, libc::SIGTERM)?;
+     wait_for_exit(updater_pid)?;
+     // A replacement updater also upgrades still-verifiable records left by an old CLI.
+-    let server_record_path = daemon.home.path().join("app-server-daemon/app-server.pid");
++    let server_record_path = daemon
++        .home
++        .path()
++        .join("codex-app-server-daemon/app-server.pid");
+     let mut legacy: Value = serde_json::from_slice(&std::fs::read(&server_record_path)?)?;
+     let native = legacy.as_object_mut().unwrap().remove("processIdentity");
+     std::fs::write(&server_record_path, serde_json::to_vec(&legacy)?)?;
+@@ -302,7 +297,7 @@ fn managed_starts_ensure_one_updater_and_recover_a_missing_one() -> Result<()> {
+         !daemon
+             .home
+             .path()
+-            .join("app-server-daemon/app-server.pid")
++            .join("codex-app-server-daemon/app-server.pid")
+             .exists()
+     );
+     assert_eq!(daemon.lifecycle("start")?["status"], "started");
+@@ -319,7 +314,7 @@ fn managed_starts_ensure_one_updater_and_recover_a_missing_one() -> Result<()> {
+ #[test]
+ fn managed_start_succeeds_when_updater_record_is_invalid() -> Result<()> {
+     let daemon = TestDaemon::new()?;
+-    let state_dir = daemon.home.path().join("app-server-daemon");
++    let state_dir = daemon.home.path().join("codex-app-server-daemon");
+     std::fs::create_dir_all(&state_dir)?;
+     std::fs::write(state_dir.join("app-server-updater.pid"), "not a PID record")?;
+ 
+@@ -332,13 +327,17 @@ fn managed_start_succeeds_when_updater_record_is_invalid() -> Result<()> {
+ 
+ #[cfg(any(target_os = "linux", target_os = "macos"))]
+ #[test]
+-fn wall_clock_shift_keeps_server_and_updater_managed() -> Result<()> {
++fn wall_clock_shift_keeps_server_managed() -> Result<()> {
+     let daemon = TestDaemon::new()?;
+     assert_eq!(daemon.lifecycle("start")?["status"], "started");
+     let server_pid = daemon.pid("app-server.pid")?;
+-    let updater_pid = daemon.pid("app-server-updater.pid")?;
+-    for name in ["app-server.pid", "app-server-updater.pid"] {
+-        let path = daemon.home.path().join("app-server-daemon").join(name);
++    {
++        let name = "app-server.pid";
++        let path = daemon
++            .home
++            .path()
++            .join("codex-app-server-daemon")
++            .join(name);
+         let mut record: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+         record["processStartTime"] = "historical wall-clock start time".into();
+         let replacement = path.with_extension("replacement");
+@@ -351,15 +350,14 @@ fn wall_clock_shift_keeps_server_and_updater_managed() -> Result<()> {
+     assert_eq!(version["backend"], "pid");
+     assert_eq!(daemon.lifecycle("start")?["status"], "alreadyRunning");
+     assert_eq!(daemon.pid("app-server.pid")?, server_pid);
+-    assert_eq!(daemon.pid("app-server-updater.pid")?, updater_pid);
+     assert_eq!(daemon.lifecycle("restart")?["status"], "restarted");
+     wait_for_exit(server_pid)?;
+     assert_ne!(daemon.pid("app-server.pid")?, server_pid);
+-    assert_eq!(daemon.pid("app-server-updater.pid")?, updater_pid);
+     Ok(())
+ }
+ 
+ #[test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ fn managed_start_keeps_updater_on_marker_mismatch_but_stops_it_for_pin() -> Result<()> {
+     let daemon = TestDaemon::new()?;
+     assert_eq!(daemon.lifecycle("start")?["status"], "started");
+@@ -391,18 +389,22 @@ fn managed_start_keeps_updater_on_marker_mismatch_but_stops_it_for_pin() -> Resu
+         !daemon
+             .home
+             .path()
+-            .join("app-server-daemon/app-server-updater.pid")
++            .join("codex-app-server-daemon/app-server-updater.pid")
+             .exists()
+     );
+     Ok(())
+ }
+ 
+ #[test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ fn restart_applies_saved_updater_preference() -> Result<()> {
+     let daemon = TestDaemon::new()?;
+     assert_eq!(daemon.lifecycle("start")?["status"], "started");
+     let updater_pid = daemon.pid("app-server-updater.pid")?;
+-    let settings = daemon.home.path().join("app-server-daemon/settings.json");
++    let settings = daemon
++        .home
++        .path()
++        .join("codex-app-server-daemon/settings.json");
+     std::fs::write(
+         &settings,
+         serde_json::to_vec(&serde_json::json!({
+@@ -456,12 +458,17 @@ fn unmanaged_app_server_does_not_launch_updater() -> Result<()> {
+     let output = daemon.lifecycle("start")?;
+     assert_eq!(output["status"], "alreadyRunning");
+     assert_eq!(output["backend"], Value::Null);
+-    assert_eq!(daemon.lifecycle("update")?["status"], "unsupported");
++    let update = daemon
++        .command()
++        .args(["app-server", "daemon", "update"])
++        .output()?;
++    assert!(!update.status.success());
++    assert!(String::from_utf8_lossy(&update.stderr).contains("standalone updates are disabled"));
+     assert!(
+         !daemon
+             .home
+             .path()
+-            .join("app-server-daemon/app-server-updater.pid")
++            .join("codex-app-server-daemon/app-server-updater.pid")
+             .exists()
+     );
+     Ok(())
+@@ -470,14 +477,14 @@ fn unmanaged_app_server_does_not_launch_updater() -> Result<()> {
+ #[test]
+ fn manual_update_rejects_an_unowned_installation() -> Result<()> {
+     let daemon = TestDaemon::new()?;
+-    std::fs::remove_file(
+-        daemon
+-            .home
+-            .path()
+-            .join("packages/standalone/current/bin/codex"),
+-    )?;
++    std::fs::remove_file(daemon.home.path().join("packages/standalone/current/codex"))?;
+ 
+-    assert_eq!(daemon.lifecycle("update")?["status"], "unsupported");
++    let update = daemon
++        .command()
++        .args(["app-server", "daemon", "update"])
++        .output()?;
++    assert!(!update.status.success());
++    assert!(String::from_utf8_lossy(&update.stderr).contains("standalone updates are disabled"));
+     assert!(daemon.pid("app-server.pid").is_err());
+     assert!(daemon.pid("app-server-updater.pid").is_err());
+     Ok(())
+@@ -501,8 +508,8 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
+     for directory in ["bin", "codex-path", "codex-resources"] {
+         std::fs::create_dir_all(package.join(directory))?;
+     }
+-    copy_executable(&daemon.codex, &package.join("bin/codex"))?;
+-    daemon.codex = package.join("bin/codex");
++    copy_executable(&daemon.codex, &package.join("codex"))?;
++    daemon.codex = package.join("codex");
+     for helper in [
+         "bin/codex-code-mode-host",
+         "codex-path/rg",
+@@ -533,7 +540,7 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
+         std::os::unix::fs::symlink(&package, standalone.join("current"))?;
+     }
+     let cli_selection = standalone.join("current").canonicalize()?;
+-    let state = daemon.home.path().join("app-server-daemon");
++    let state = daemon.home.path().join("codex-app-server-daemon");
+     if initial == InitialDaemon::Missing {
+         std::fs::remove_file(state.join("app-server.stderr.log"))?;
+     }
+@@ -642,7 +649,7 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
+         assert_eq!(
+             output["managedCodexPath"],
+             current
+-                .join("bin/codex")
++                .join("codex")
+                 .to_str()
+                 .context("managed path is not UTF-8")?
+         );
+@@ -670,21 +677,25 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
+ }
+ 
+ #[test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ fn packaged_daemon_start_and_explicit_replacement() -> Result<()> {
+     packaged_daemon_launch("start", InitialDaemon::Missing)
+ }
+ 
+ #[test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ fn packaged_daemon_restart_seeds_local_package() -> Result<()> {
+     packaged_daemon_launch("restart", InitialDaemon::Missing)
+ }
+ 
+ #[test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ fn packaged_daemon_bootstrap_seeds_local_package() -> Result<()> {
+     packaged_daemon_launch("bootstrap", InitialDaemon::Missing)
+ }
+ 
+ #[test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ fn packaged_daemon_explicit_replacement_migrates_running_legacy() -> Result<()> {
+     packaged_daemon_launch("start", InitialDaemon::Legacy)
+ }
+diff --git a/codex-rs/cli/tests/daemon_startup.rs b/codex-rs/cli/tests/daemon_startup.rs
+index 67eff23..2966806 100644
+--- a/codex-rs/cli/tests/daemon_startup.rs
++++ b/codex-rs/cli/tests/daemon_startup.rs
+@@ -55,6 +55,7 @@ async fn daemon_exclusion_survives_fork_picker() -> Result<()> {
+ }
+ 
+ #[tokio::test]
++#[ignore = "MeshAgent default authentication replaces the upstream default-provider Bedrock wizard"]
+ async fn daemon_auto_start_preserves_bedrock_onboarding() -> Result<()> {
+     daemon_startup("bedrock").await
+ }
+@@ -92,6 +93,7 @@ async fn restrictive_launcher_uses_embedded_if_daemon_cannot_start() -> Result<(
+ 
+ #[tokio::test]
+ #[cfg(unix)]
++#[ignore = "MeshAgent default authentication replaces the upstream default-provider Bedrock wizard"]
+ async fn bedrock_onboarding_leaves_a_running_daemon_untouched() -> Result<()> {
+     daemon_startup("bedrock-running").await
+ }
+@@ -108,7 +110,7 @@ async fn daemon_startup(command: &str) -> Result<()> {
+     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+     anyhow::ensure!(
+         Command::new(&codex)
+-            .env("CODEX_HOME", home.path())
++            .env("MESHAGENT_CODEX_HOME", home.path())
+             .arg("--version")
+             .output()?
+             .status
+@@ -118,7 +120,7 @@ async fn daemon_startup(command: &str) -> Result<()> {
+     fs::write(
+         home.path().join("config.toml"),
+         format!(
+-            "model = \"gpt-5.6-terra\"\n\
++            "model_provider = \"openai\"\nmodel = \"gpt-5.6-terra\"\n\
+          features.bedrock_setup_wizard = true\ncli_auth_credentials_store = \"file\"\n\
+          suppress_unstable_features_warning = true\nanalytics.enabled = false\n\
+          windows.sandbox = \"unelevated\"\n\
+@@ -152,7 +154,10 @@ async fn daemon_startup(command: &str) -> Result<()> {
+     ] {
+         env.remove(key);
+     }
+-    env.insert("CODEX_HOME".into(), home.path().display().to_string());
++    env.insert(
++        "MESHAGENT_CODEX_HOME".into(),
++        home.path().display().to_string(),
++    );
+     env.insert(
+         "CODEX_SQLITE_HOME".into(),
+         home.path().display().to_string(),
+@@ -164,18 +169,18 @@ async fn daemon_startup(command: &str) -> Result<()> {
+         // A selected package with a stopped daemon avoids installing a release.
+         let managed = home
+             .path()
+-            .join("packages/app-server-daemon/current/bin")
++            .join("packages/standalone/current")
+             .join(if cfg!(windows) { "codex.exe" } else { "codex" });
+-        fs::create_dir_all(home.path().join("packages/app-server-daemon/current/bin"))?;
++        fs::create_dir_all(home.path().join("packages/standalone/current"))?;
+         // Hard links change the executable's ctime and invalidate Rosetta's translation cache.
+         #[cfg(unix)]
+         std::os::unix::fs::symlink(&codex, &managed)?;
+         #[cfg(not(unix))]
+         fs::hard_link(&codex, &managed).or_else(|_| fs::copy(&codex, &managed).map(|_| ()))?;
+         if command != "restrictive-job" {
+-            fs::create_dir(home.path().join("app-server-daemon"))?;
++            fs::create_dir(home.path().join("codex-app-server-daemon"))?;
+             fs::write(
+-                home.path().join("app-server-daemon/settings.json"),
++                home.path().join("codex-app-server-daemon/settings.json"),
+                 if persisted {
+                     r#"{"shutdownGraceSeconds":0,"updater":{"autoUpdateEnabled":false},"featureOverrides":{"api_key_model_discovery":true}}"#
+                 } else {
+@@ -184,7 +189,7 @@ async fn daemon_startup(command: &str) -> Result<()> {
+             )?;
+         }
+     }
+-    let pid_file = home.path().join("app-server-daemon/daemon.pid");
++    let pid_file = home.path().join("codex-app-server-daemon/app-server.pid");
+     let result = async {
+         let mut existing_daemon = if command == "bedrock-running" || (mismatch && !disabling) {
+             let started = Command::new(&codex)
+@@ -310,7 +315,7 @@ async fn daemon_startup(command: &str) -> Result<()> {
+                 {
+                     if disabling && *ready == "Backgroundserverhasincompatiblefeaturesettings" {
+                         existing_daemon = Some(fs::read(&pid_file)?);
+-                        let settings: serde_json::Value = serde_json::from_slice(&fs::read(home.path().join("app-server-daemon/settings.json"))?)?;
++                        let settings: serde_json::Value = serde_json::from_slice(&fs::read(home.path().join("codex-app-server-daemon/settings.json"))?)?;
+                         if persisted {
+                             ensure!(settings["featureOverrides"]["api_key_model_discovery"] == true);
+                         } else {
+@@ -331,7 +336,7 @@ async fn daemon_startup(command: &str) -> Result<()> {
+                         }
+                     } else if command == "start" {
+                         ensure!(text.contains("Server:Localbackgroundserver"));
+-                        ensure!(home.path().join("app-server-daemon/daemon.pid").exists());
++                        ensure!(home.path().join("codex-app-server-daemon/app-server.pid").exists());
+                     } else if let Some(existing_daemon) = &existing_daemon {
+                         ensure!(fs::read(&pid_file)? == *existing_daemon);
+                     } else if bedrock_onboarding || command == "restrictive-job" {
+diff --git a/codex-rs/cli/tests/daemon_telemetry.rs b/codex-rs/cli/tests/daemon_telemetry.rs
+index 48ea0b2..90d18a8 100644
+--- a/codex-rs/cli/tests/daemon_telemetry.rs
++++ b/codex-rs/cli/tests/daemon_telemetry.rs
+@@ -33,7 +33,7 @@ async fn foreground_update_respects_consent_and_reports_unconfirmed() -> anyhow:
+         let mut command = tokio::process::Command::new(&codex);
+         command
+             .current_dir(home.path())
+-            .env("CODEX_HOME", home.path())
++            .env("MESHAGENT_CODEX_HOME", home.path())
+             .env_remove(codex_app_server_daemon::telemetry::HANDOFF_ENV)
+             .arg("app-server");
+         if analytics_default_enabled {
 diff --git a/codex-rs/cli/tests/debug_models.rs b/codex-rs/cli/tests/debug_models.rs
-index f9b0503..23df3d8 100644
+index f9b0503..2caeeb7 100644
 --- a/codex-rs/cli/tests/debug_models.rs
 +++ b/codex-rs/cli/tests/debug_models.rs
-@@ -1,11 +1,19 @@
+@@ -1,11 +1,21 @@
  use std::path::Path;
  
  use anyhow::Result;
++use pretty_assertions::assert_eq;
 +use serde_json::json;
  use tempfile::TempDir;
 +use wiremock::Mock;
@@ -896,69 +1389,159 @@ index f9b0503..23df3d8 100644
      let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
      cmd.env("MESHAGENT_CODEX_HOME", codex_home);
 +    cmd.env("HOME", codex_home);
++    cmd.env("USERPROFILE", codex_home);
      Ok(cmd)
  }
  
-@@ -38,3 +46,57 @@ fn debug_models_default_prints_json_without_auth() -> Result<()> {
+@@ -25,7 +35,7 @@ fn debug_models_bundled_prints_json() -> Result<()> {
+ }
+ 
+ #[test]
+-fn debug_models_default_prints_json_without_auth() -> Result<()> {
++fn debug_models_meshagent_without_auth_has_no_bundled_fallback() -> Result<()> {
+     let codex_home = TempDir::new()?;
+     let mut cmd = codex_command(codex_home.path())?;
+     let output = cmd.args(["debug", "models"]).output()?;
+@@ -34,7 +44,61 @@ fn debug_models_default_prints_json_without_auth() -> Result<()> {
+     let stdout = String::from_utf8(output.stdout)?;
+     let value: serde_json::Value = serde_json::from_str(&stdout)?;
+     assert!(value["models"].is_array());
+-    assert!(!value["models"].as_array().unwrap_or(&Vec::new()).is_empty());
++    assert_eq!(value["models"], json!([]));
  
      Ok(())
  }
 +
 +#[tokio::test]
-+async fn debug_models_routes_meshagent_auth_and_project_to_active_account() -> Result<()> {
++async fn debug_models_routes_meshagent_catalog_after_project_and_account_switches() -> Result<()> {
 +    let server = MockServer::start().await;
-+    Mock::given(method("GET"))
-+        .and(path("/openai/v1/models"))
-+        .and(header("authorization", "Bearer mesh-token"))
-+        .and(header("Meshagent-Project-Id", "project-1"))
-+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"models": []})))
-+        .expect(1)
-+        .mount(&server)
-+        .await;
-+
 +    let codex_home = TempDir::new()?;
 +    let settings_dir = codex_home.path().join(".meshagent");
 +    std::fs::create_dir_all(&settings_dir)?;
-+    std::fs::write(
-+        settings_dir.join("settings.json"),
-+        serde_json::to_vec_pretty(&json!({
-+            "active_user_id": "mesh-user",
-+            "users": {
-+                "mesh-user": {
-+                    "profile": {
-+                        "id": "mesh-user",
-+                        "email": "mesh@example.test"
-+                    },
-+                    "api_url": server.uri(),
-+                    "session": {
-+                        "access_token": "mesh-token",
-+                        "refresh_token": "mesh-refresh",
-+                        "expires_at": 4102444800_i64
-+                    },
-+                    "project": {
-+                        "active_project": "project-1"
++    for (user, project, token) in [
++        ("mesh-user", "project-1", "mesh-token"),
++        ("mesh-user", "project-2", "mesh-token"),
++        ("other-user", "project-3", "other-token"),
++    ] {
++        Mock::given(method("GET"))
++            .and(path("/openai/v1/models"))
++            .and(header("authorization", format!("Bearer {token}")))
++            .and(header("Meshagent-Project-Id", project))
++            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"models": []})))
++            .expect(1)
++            .mount(&server)
++            .await;
++        std::fs::write(
++            settings_dir.join("settings.json"),
++            serde_json::to_vec_pretty(&json!({
++                "active_user_id": user,
++                "users": {
++                    user: {
++                        "profile": {"id": user, "email": format!("{user}@example.test")},
++                        "api_url": server.uri(),
++                        "session": {
++                            "access_token": token,
++                            "refresh_token": "mesh-refresh",
++                            "expires_at": 4102444800_i64
++                        },
++                        "project": {"active_project": project}
 +                    }
 +                }
-+            }
-+        }))?,
-+    )?;
-+
-+    let output = codex_command(codex_home.path())?
-+        .env("NO_PROXY", "127.0.0.1,localhost")
-+        .env("no_proxy", "127.0.0.1,localhost")
-+        .args(["debug", "models"])
-+        .output()?;
-+
-+    assert!(
-+        output.status.success(),
-+        "{}",
-+        String::from_utf8_lossy(&output.stderr)
-+    );
++            }))?,
++        )?;
++        let output = codex_command(codex_home.path())?
++            .env("NO_PROXY", "127.0.0.1,localhost")
++            .env("no_proxy", "127.0.0.1,localhost")
++            .args(["debug", "models"])
++            .output()?;
++        assert!(
++            output.status.success(),
++            "{}",
++            String::from_utf8_lossy(&output.stderr)
++        );
++        let catalog: serde_json::Value = serde_json::from_slice(&output.stdout)?;
++        assert_eq!(catalog["models"], json!([]));
++    }
 +    server.verify().await;
 +    Ok(())
 +}
+diff --git a/codex-rs/cli/tests/doctor_path_safety.rs b/codex-rs/cli/tests/doctor_path_safety.rs
+index 0b53ebb..ecb3ad1 100644
+--- a/codex-rs/cli/tests/doctor_path_safety.rs
++++ b/codex-rs/cli/tests/doctor_path_safety.rs
+@@ -50,7 +50,7 @@ impl Fixture {
+             // Translate the fixture before the timed diagnostic command.
+             anyhow::ensure!(
+                 std::process::Command::new(&program)
+-                    .env("CODEX_HOME", &home)
++                    .env("MESHAGENT_CODEX_HOME", &home)
+                     .arg("--version")
+                     .output()?
+                     .status
+@@ -124,7 +124,7 @@ wire_api = "responses"
+         let mut command = assert_cmd::Command::new(&self.program);
+         command
+             .current_dir(&self.workspace)
+-            .env("CODEX_HOME", &self.home)
++            .env("MESHAGENT_CODEX_HOME", &self.home)
+             .env("HOME", self.root.path())
+             .env("PATH", &self.path)
+             .env("CODEX_TEST_HELPER_MARKER", &self.marker)
+diff --git a/codex-rs/cli/tests/exec_server/pid_namespace_tests.rs b/codex-rs/cli/tests/exec_server/pid_namespace_tests.rs
+index 6129e7f..bad1e59 100644
+--- a/codex-rs/cli/tests/exec_server/pid_namespace_tests.rs
++++ b/codex-rs/cli/tests/exec_server/pid_namespace_tests.rs
+@@ -82,7 +82,7 @@ exec "${0%/*}/real-bwrap" "$@"
+                 "linux_sandbox_pid_namespace = 'inherit'\n")?;
+             let mut command = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+             command.args(["exec-server", "--listen", "stdio"])
+-                .env("CODEX_HOME", codex_home.path())
++                .env("MESHAGENT_CODEX_HOME", codex_home.path())
+                 .env("PATH", &path)
+                 .env("CODEX_LINUX_SANDBOX_PID_NAMESPACE", "inherit")
+                 .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+diff --git a/codex-rs/cli/tests/exec_server_websocket_auth.rs b/codex-rs/cli/tests/exec_server_websocket_auth.rs
+index d759de2..4906e6d 100644
+--- a/codex-rs/cli/tests/exec_server_websocket_auth.rs
++++ b/codex-rs/cli/tests/exec_server_websocket_auth.rs
+@@ -43,7 +43,7 @@ async fn exec_server_websocket_auth_gates_rpc_connections() -> Result<()> {
+             let mut command = Command::new(&codex);
+             command
+                 .args(["exec-server", "--listen", "ws://127.0.0.1:0", "--ws-auth"])
+-                .env("CODEX_HOME", home.path())
++                .env("MESHAGENT_CODEX_HOME", home.path())
+                 .stdin(Stdio::null())
+                 .stdout(Stdio::piped())
+                 .stderr(Stdio::inherit())
+@@ -178,7 +178,7 @@ fn exec_server_websocket_auth_rejects_inapplicable_transports() -> Result<()> {
+         ),
+     ] {
+         assert_cmd::Command::new(&codex)
+-            .env("CODEX_HOME", home.path())
++            .env("MESHAGENT_CODEX_HOME", home.path())
+             .args([
+                 "exec-server",
+                 "--ws-auth",
+@@ -212,7 +212,7 @@ fn exec_server_websocket_auth_rejects_invalid_configuration() -> Result<()> {
+         (vec!["--ws-auth", "capability-token"], "is required"),
+     ] {
+         assert_cmd::Command::new(&codex)
+-            .env("CODEX_HOME", home.path())
++            .env("MESHAGENT_CODEX_HOME", home.path())
+             .args(["exec-server"])
+             .args(args)
+             .assert()
+@@ -250,7 +250,7 @@ async fn app_server_executor_auth_supports_tokens_and_legacy_configuration() ->
+                 ]);
+             }
+             let mut executor = command
+-                .env("CODEX_HOME", executor_home.path())
++                .env("MESHAGENT_CODEX_HOME", executor_home.path())
+                 .stdin(Stdio::null())
+                 .stdout(Stdio::piped())
+                 .stderr(Stdio::inherit())
 diff --git a/codex-rs/cli/tests/login.rs b/codex-rs/cli/tests/login.rs
-index 5bd589d..852fe68 100644
+index 5bd589d..4ed46ef 100644
 --- a/codex-rs/cli/tests/login.rs
 +++ b/codex-rs/cli/tests/login.rs
 @@ -12,6 +12,7 @@ use codex_login::AuthKeyringBackendKind;
@@ -969,15 +1552,24 @@ index 5bd589d..852fe68 100644
  use codex_login::login_with_bedrock_access_keys;
  use codex_protocol::shell_environment::OPENAI_FEDERATION_RULE_ID_ENV_VAR;
  use codex_protocol::shell_environment::OPENAI_IDENTITY_TOKEN_FILE_ENV_VAR;
-@@ -30,6 +31,7 @@ use wiremock::matchers::path;
+@@ -30,13 +31,15 @@ use wiremock::matchers::path;
  fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
      let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
      cmd.env("MESHAGENT_CODEX_HOME", codex_home);
 +    cmd.env("HOME", codex_home);
++    cmd.env("USERPROFILE", codex_home);
      Ok(cmd)
  }
  
-@@ -56,6 +58,7 @@ fn login_with_api_key_reads_stdin_and_writes_auth_json() -> Result<()> {
+ fn write_file_auth_config(codex_home: &Path) -> Result<()> {
+     std::fs::write(
+         codex_home.join("config.toml"),
+-        "cli_auth_credentials_store = \"file\"\n",
++        "model_provider = \"openai\"\ncli_auth_credentials_store = \"file\"\n",
+     )?;
+     Ok(())
+ }
+@@ -56,6 +59,7 @@ fn login_with_api_key_reads_stdin_and_writes_auth_json() -> Result<()> {
          "-c",
          "forced_login_method=\"api\"",
          "login",
@@ -985,7 +1577,7 @@ index 5bd589d..852fe68 100644
          "--with-api-key",
      ])
      .write_stdin("sk-test\n")
-@@ -71,6 +74,145 @@ fn login_with_api_key_reads_stdin_and_writes_auth_json() -> Result<()> {
+@@ -71,6 +75,145 @@ fn login_with_api_key_reads_stdin_and_writes_auth_json() -> Result<()> {
      Ok(())
  }
  
@@ -1131,7 +1723,7 @@ index 5bd589d..852fe68 100644
  #[test]
  fn login_status_reports_auth_storage_errors() -> Result<()> {
      let codex_home = TempDir::new()?;
-@@ -78,7 +220,7 @@ fn login_status_reports_auth_storage_errors() -> Result<()> {
+@@ -78,7 +221,7 @@ fn login_status_reports_auth_storage_errors() -> Result<()> {
      std::fs::write(codex_home.path().join("auth.json"), "{invalid json")?;
  
      codex_command(codex_home.path())?
@@ -1140,7 +1732,7 @@ index 5bd589d..852fe68 100644
          .assert()
          .failure()
          .stderr(contains("Error checking login status:"));
-@@ -96,7 +238,7 @@ fn login_status_validates_configured_workload_identity() -> Result<()> {
+@@ -96,7 +239,7 @@ fn login_status_validates_configured_workload_identity() -> Result<()> {
          .env_remove(CODEX_ACCESS_TOKEN_ENV_VAR)
          .env(OPENAI_FEDERATION_RULE_ID_ENV_VAR, "rule-test")
          .env(OPENAI_IDENTITY_TOKEN_FILE_ENV_VAR, &missing_assertion)
@@ -1149,7 +1741,7 @@ index 5bd589d..852fe68 100644
          .assert()
          .failure()
          .stderr(contains("could not read workload identity assertion file"));
-@@ -189,7 +331,7 @@ fn login_with_access_token_rejects_invalid_jwt() -> Result<()> {
+@@ -189,7 +332,7 @@ fn login_with_access_token_rejects_invalid_jwt() -> Result<()> {
      write_file_auth_config(codex_home.path())?;
  
      let mut cmd = codex_command(codex_home.path())?;
@@ -1158,7 +1750,16 @@ index 5bd589d..852fe68 100644
          .write_stdin("not-a-jwt\n")
          .assert()
          .failure()
-@@ -314,7 +456,13 @@ async fn device_login_revokes_existing_auth_before_requesting_new_tokens() -> Re
+@@ -217,7 +360,7 @@ async fn debug_prompt_input_follows_authenticated_attribution_setting() -> Resul
+     std::fs::write(
+         codex_home.path().join("config.toml"),
+         format!(
+-            "cli_auth_credentials_store = \"file\"\nchatgpt_base_url = \"{}/backend-api\"\n",
++            "model_provider = \"openai\"\ncli_auth_credentials_store = \"file\"\nchatgpt_base_url = \"{}/backend-api\"\n",
+             server.uri()
+         ),
+     )?;
+@@ -314,7 +457,13 @@ async fn device_login_revokes_existing_auth_before_requesting_new_tokens() -> Re
      .env("no_proxy", "127.0.0.1,localhost")
      .env_remove("CODEX_ACCESS_TOKEN")
      .env_remove("OPENAI_API_KEY")
@@ -1173,11 +1774,135 @@ index 5bd589d..852fe68 100644
      .assert()
      .success()
      .stderr(contains("Successfully logged in"));
+diff --git a/codex-rs/cli/tests/mcp_login.rs b/codex-rs/cli/tests/mcp_login.rs
+index 4684e13..e65c2f6 100644
+--- a/codex-rs/cli/tests/mcp_login.rs
++++ b/codex-rs/cli/tests/mcp_login.rs
+@@ -104,7 +104,7 @@ impl Fixture {
+         let mut child = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+             .kill_on_drop(true)
+             .current_dir(self.home.path())
+-            .env("CODEX_HOME", self.home.path())
++            .env("MESHAGENT_CODEX_HOME", self.home.path())
+             .env("NO_PROXY", "127.0.0.1,localhost")
+             .env("no_proxy", "127.0.0.1,localhost")
+             .args(["mcp", "login", "manual", "--no-browser"])
+@@ -234,7 +234,7 @@ async fn add_persists_client_secret_for_subsequent_login_without_disclosure() ->
+         Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+             .kill_on_drop(true)
+             .current_dir(fixture.home.path())
+-            .env("CODEX_HOME", fixture.home.path())
++            .env("MESHAGENT_CODEX_HOME", fixture.home.path())
+             .env("NO_PROXY", "127.0.0.1,localhost")
+             .env("no_proxy", "127.0.0.1,localhost")
+             .args([
+diff --git a/codex-rs/cli/tests/sandbox_tty.rs b/codex-rs/cli/tests/sandbox_tty.rs
+index d22c98f..a655fa8 100644
+--- a/codex-rs/cli/tests/sandbox_tty.rs
++++ b/codex-rs/cli/tests/sandbox_tty.rs
+@@ -57,7 +57,7 @@ async fn sandbox_blocks_terminal_input_injection() -> anyhow::Result<()> {
+     let codex_home = TempDir::new()?;
+     let mut env: HashMap<String, String> = std::env::vars().collect();
+     env.insert(
+-        "CODEX_HOME".to_string(),
++        "MESHAGENT_CODEX_HOME".to_string(),
+         codex_home.path().to_string_lossy().into_owned(),
+     );
+ 
+diff --git a/codex-rs/cli/tests/worktree.rs b/codex-rs/cli/tests/worktree.rs
+index 1ec06aa..e12a658 100644
+--- a/codex-rs/cli/tests/worktree.rs
++++ b/codex-rs/cli/tests/worktree.rs
+@@ -238,7 +238,7 @@ trust_level = "trusted"
+     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+     anyhow::ensure!(
+         Command::new(&program)
+-            .env("CODEX_HOME", &home)
++            .env("MESHAGENT_CODEX_HOME", &home)
+             .arg("--version")
+             .output()?
+             .status
+@@ -246,7 +246,7 @@ trust_level = "trusted"
+         "failed to prepare CLI test executable"
+     );
+     let mut env: HashMap<String, String> = std::env::vars().collect();
+-    env.insert("CODEX_HOME".into(), home.display().to_string());
++    env.insert("MESHAGENT_CODEX_HOME".into(), home.display().to_string());
+     env.insert("CODEX_SQLITE_HOME".into(), home.display().to_string());
+     env.insert("NO_PROXY".into(), "127.0.0.1,localhost".into());
+     env.insert("no_proxy".into(), "127.0.0.1,localhost".into());
+@@ -274,7 +274,7 @@ trust_level = "trusted"
+         }
+     }
+     let _daemon = if backend == "daemon" {
+-        let bin = home.join("packages/app-server-daemon/current/bin");
++        let bin = home.join("packages/standalone/current");
+         fs::create_dir_all(&bin)?;
+         let managed = bin.join(if cfg!(windows) { "codex.exe" } else { "codex" });
+         // Hard links change the executable's ctime and invalidate Rosetta's translation cache.
+@@ -282,9 +282,9 @@ trust_level = "trusted"
+         std::os::unix::fs::symlink(program.canonicalize()?, &managed)?;
+         #[cfg(not(unix))]
+         fs::hard_link(&program, &managed).or_else(|_| fs::copy(&program, &managed).map(|_| ()))?;
+-        fs::create_dir(home.join("app-server-daemon"))?;
++        fs::create_dir(home.join("codex-app-server-daemon"))?;
+         fs::write(
+-            home.join("app-server-daemon/settings.json"),
++            home.join("codex-app-server-daemon/settings.json"),
+             r#"{"shutdownGraceSeconds":0,"updater":{"autoUpdateEnabled":false}}"#,
+         )?;
+         let mut daemon_stop = Command::new(&program);
+@@ -561,29 +561,7 @@ trust_level = "trusted"
+             );
+         }
+         if matches!(startup_result, Ok(Ok(()))) && renamed.is_ok() {
+-            if !fork && backend == "embedded" {
+-                for (input, expected) in [
+-                    ("/daemon\r", "Install latest public stable"),
+-                    ("\r", "Update and exit"),
+-                    ("\x1b[B\r", "Updating the local background server..."),
+-                ] {
+-                    session
+-                        .writer_sender()
+-                        .send(input.as_bytes().to_vec())
+-                        .await?;
+-                    tokio::time::timeout(Duration::from_secs(/*secs*/ 10), async {
+-                        while !output.contains(expected) {
+-                            let bytes = stdout.recv().await.context("TUI exited before handoff")?;
+-                            output.push_str(&String::from_utf8_lossy(&bytes));
+-                        }
+-                        Ok::<_, anyhow::Error>(())
+-                    })
+-                    .await
+-                    .with_context(|| format!("waiting for {expected}: {output}"))??;
+-                }
+-            } else {
+-                session.writer_sender().send(b"/quit\r".to_vec()).await?;
+-            }
++            session.writer_sender().send(b"/quit\r".to_vec()).await?;
+         } else {
+             session.terminate();
+         }
+@@ -615,14 +593,6 @@ trust_level = "trusted"
+                 .flat_map(|resource| resource["scopeMetrics"].as_array().into_iter().flatten())
+                 .flat_map(|scope| scope["metrics"].as_array().into_iter().flatten())
+                 .collect::<Vec<_>>();
+-            if backend == "embedded" {
+-                let update = exported
+-                    .iter()
+-                    .find(|metric| metric["name"] == "codex.daemon.update")
+-                    .context("handoff metric")?;
+-                let update_point = &update["sum"]["dataPoints"][0];
+-                assert_eq!(update_point["asInt"], 1);
+-            }
+             let point = exported
+                 .iter()
+                 .filter(|metric| metric["name"] == "codex.tui.start")
 diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
-index dca329a..9b39b78 100644
+index 60c6f65..13150a5 100644
 --- a/codex-rs/core/src/config/mod.rs
 +++ b/codex-rs/core/src/config/mod.rs
-@@ -289,6 +289,7 @@ pub(crate) async fn test_config() -> Config {
+@@ -311,6 +311,7 @@ pub(crate) async fn test_config() -> Config {
      Config::load_from_base_config_with_overrides(
          ConfigToml {
              model: Some("gpt-5.5".to_string()),
@@ -1185,9 +1910,9 @@ index dca329a..9b39b78 100644
              ..Default::default()
          },
          ConfigOverrides::default(),
-@@ -3721,7 +3722,7 @@ impl Config {
- 
-         let model_provider_id = model_provider
+@@ -3816,7 +3817,7 @@ impl Config {
+         let model_provider_id = config_layer_stack.required_model_provider().map(str::to_string)
+             .or(model_provider)
              .or(cfg.model_provider)
 -            .unwrap_or_else(|| "openai".to_string());
 +            .unwrap_or_else(|| "meshagent".to_string());
@@ -1195,10 +1920,10 @@ index dca329a..9b39b78 100644
              .get(&model_provider_id)
              .ok_or_else(|| {
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index b5931b3..21edb11 100644
+index 13ebc68..c6ebbfe 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -4989,6 +4989,7 @@ async fn build_test_config(codex_home: &Path) -> Config {
+@@ -4740,6 +4740,7 @@ async fn build_test_config(codex_home: &Path) -> Config {
          .codex_home(codex_home.to_path_buf())
          .harness_overrides(ConfigOverrides {
              model: Some("gpt-5.5".to_string()),
@@ -1206,30 +1931,309 @@ index b5931b3..21edb11 100644
              ..Default::default()
          })
          .build()
+diff --git a/codex-rs/core/tests/common/Cargo.toml b/codex-rs/core/tests/common/Cargo.toml
+index 5644a06..69f8c7c 100644
+--- a/codex-rs/core/tests/common/Cargo.toml
++++ b/codex-rs/core/tests/common/Cargo.toml
+@@ -42,6 +42,7 @@ opentelemetry_sdk = { workspace = true }
+ regex-lite = { workspace = true }
+ serde_json = { workspace = true }
+ tempfile = { workspace = true }
++toml = { workspace = true }
+ tokio = { workspace = true, features = ["net", "test-util", "time"] }
+ tokio-tungstenite = { workspace = true }
+ tracing = { workspace = true }
 diff --git a/codex-rs/core/tests/common/lib.rs b/codex-rs/core/tests/common/lib.rs
-index 5705355..ce10059 100644
+index 0b05675..58fd9c5 100644
 --- a/codex-rs/core/tests/common/lib.rs
 +++ b/codex-rs/core/tests/common/lib.rs
-@@ -231,6 +231,7 @@ allow_local_binding = true
- #[cfg(target_os = "linux")]
- fn default_test_overrides() -> ConfigOverrides {
-     ConfigOverrides {
-+        model_provider: Some("openai".to_string()),
-         codex_linux_sandbox_exe: Some(
-             find_codex_linux_sandbox_exe().expect("should find binary for codex-linux-sandbox"),
-         ),
-@@ -240,7 +241,10 @@ fn default_test_overrides() -> ConfigOverrides {
- 
- #[cfg(not(target_os = "linux"))]
- fn default_test_overrides() -> ConfigOverrides {
--    ConfigOverrides::default()
-+    ConfigOverrides {
-+        model_provider: Some("openai".to_string()),
-+        ..ConfigOverrides::default()
+@@ -208,6 +208,22 @@ pub async fn load_default_config_for_test_with_cloud_config_bundle(
+     codex_home: &TempDir,
+     cloud_config_bundle: CloudConfigBundleLoader,
+ ) -> Config {
++    // Persist the fixture provider so request-time config reloads use the same mock backend.
++    let config_path = codex_home.path().join("config.toml");
++    let contents = if config_path.exists() {
++        std::fs::read_to_string(&config_path).expect("read fixture config")
++    } else {
++        String::new()
++    };
++    let parsed: codex_config::config_toml::ConfigToml =
++        toml::from_str(&contents).expect("parse fixture config");
++    if parsed.model_provider.is_none() {
++        std::fs::write(
++            &config_path,
++            format!("model_provider = \"openai\"\n{contents}"),
++        )
++        .expect("write fixture provider");
 +    }
- }
+     ConfigBuilder::default()
+         .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+         .codex_home(codex_home.path().to_path_buf())
+diff --git a/codex-rs/core/tests/common/test_codex_exec.rs b/codex-rs/core/tests/common/test_codex_exec.rs
+index 4020a4d..724e6af 100644
+--- a/codex-rs/core/tests/common/test_codex_exec.rs
++++ b/codex-rs/core/tests/common/test_codex_exec.rs
+@@ -15,7 +15,7 @@ impl TestCodexExecBuilder {
+                 .expect("should find binary for codex-exec"),
+         );
+         cmd.current_dir(self.cwd.path())
+-            .env("CODEX_HOME", self.home.path())
++            .env("MESHAGENT_CODEX_HOME", self.home.path())
+             .env("CODEX_SQLITE_HOME", self.home.path())
+             .env(CODEX_API_KEY_ENV_VAR, "dummy");
+         cmd
+diff --git a/codex-rs/core/tests/suite/cli_stream.rs b/codex-rs/core/tests/suite/cli_stream.rs
+index 715da9d..9f8c10c 100644
+--- a/codex-rs/core/tests/suite/cli_stream.rs
++++ b/codex-rs/core/tests/suite/cli_stream.rs
+@@ -72,6 +72,7 @@ fn personal_access_token_exec_command(server: &MockServer, home: &TempDir) -> Co
+     let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+     let mut cmd = Command::new(bin);
+     cmd.arg("exec")
++        .args(["-c", "model_provider=\"openai\""])
+         .arg("--skip-git-repo-check")
+         .arg("-c")
+         .arg(format!("openai_base_url=\"{}/api/codex\"", server.uri()))
+@@ -80,7 +81,7 @@ fn personal_access_token_exec_command(server: &MockServer, home: &TempDir) -> Co
+         .arg("-C")
+         .arg(repo_root())
+         .arg("hello?");
+-    cmd.env("CODEX_HOME", home.path())
++    cmd.env("MESHAGENT_CODEX_HOME", home.path())
+         .env(CODEX_ACCESS_TOKEN_ENV_VAR, PERSONAL_ACCESS_TOKEN)
+         .env("CODEX_AUTHAPI_BASE_URL", server.uri())
+         .env_remove(CODEX_API_KEY_ENV_VAR)
+@@ -231,6 +232,7 @@ async fn responses_mode_stream_cli() {
+     let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+     let mut cmd = Command::new(bin);
+     cmd.arg("exec")
++        .args(["-c", "model_provider=\"openai\""])
+         .arg("--skip-git-repo-check")
+         .arg("-c")
+         .arg(&provider_override)
+@@ -239,7 +241,7 @@ async fn responses_mode_stream_cli() {
+         .arg("-C")
+         .arg(&repo_root)
+         .arg("hello?");
+-    cmd.env("CODEX_HOME", home.path())
++    cmd.env("MESHAGENT_CODEX_HOME", home.path())
+         .env("OPENAI_API_KEY", "dummy");
  
- #[cfg(target_os = "linux")]
+     let output = run_cli_command(&mut cmd).unwrap();
+@@ -273,13 +275,14 @@ async fn responses_mode_stream_cli_supports_openai_base_url_config_override() {
+     let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+     let mut cmd = Command::new(bin);
+     cmd.arg("exec")
++        .args(["-c", "model_provider=\"openai\""])
+         .arg("--skip-git-repo-check")
+         .arg("-c")
+         .arg(format!("openai_base_url=\"{}/v1\"", server.uri()))
+         .arg("-C")
+         .arg(&repo_root)
+         .arg("hello?");
+-    cmd.env("CODEX_HOME", home.path())
++    cmd.env("MESHAGENT_CODEX_HOME", home.path())
+         .env("OPENAI_API_KEY", "dummy");
+ 
+     let output = run_cli_command(&mut cmd).unwrap();
+@@ -325,6 +328,7 @@ async fn exec_cli_applies_model_instructions_file() {
+     let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+     let mut cmd = Command::new(bin);
+     cmd.arg("exec")
++        .args(["-c", "model_provider=\"openai\""])
+         .arg("--skip-git-repo-check")
+         .arg("--model")
+         .arg("gpt-5.5")
+@@ -337,7 +341,7 @@ async fn exec_cli_applies_model_instructions_file() {
+         .arg("-C")
+         .arg(&repo_root)
+         .arg("hello?\n");
+-    cmd.env("CODEX_HOME", home.path())
++    cmd.env("MESHAGENT_CODEX_HOME", home.path())
+         .env("OPENAI_API_KEY", "dummy");
+ 
+     let output = run_cli_command(&mut cmd).unwrap();
+@@ -409,7 +413,7 @@ async fn exec_cli_profile_applies_model_instructions_file() {
+         .arg("-C")
+         .arg(&repo_root)
+         .arg("hello?\n");
+-    cmd.env("CODEX_HOME", home.path())
++    cmd.env("MESHAGENT_CODEX_HOME", home.path())
+         .env("OPENAI_API_KEY", "dummy");
+ 
+     let output = run_cli_command(&mut cmd).unwrap();
+@@ -444,13 +448,14 @@ async fn responses_api_stream_cli() {
+     let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+     let mut cmd = Command::new(bin);
+     cmd.arg("exec")
++        .args(["-c", "model_provider=\"openai\""])
+         .arg("--skip-git-repo-check")
+         .arg("-c")
+         .arg(format!("openai_base_url=\"{}/v1\"", server.uri()))
+         .arg("-C")
+         .arg(&repo_root)
+         .arg("hello?");
+-    cmd.env("CODEX_HOME", home.path())
++    cmd.env("MESHAGENT_CODEX_HOME", home.path())
+         .env("OPENAI_API_KEY", "dummy");
+ 
+     let output = run_cli_command(&mut cmd).unwrap();
+@@ -485,13 +490,14 @@ async fn integration_creates_and_checks_session_file() -> anyhow::Result<()> {
+     let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+     let mut cmd = Command::new(bin);
+     cmd.arg("exec")
++        .args(["-c", "model_provider=\"openai\""])
+         .arg("--skip-git-repo-check")
+         .arg("-c")
+         .arg(format!("openai_base_url=\"{}/v1\"", server.uri()))
+         .arg("-C")
+         .arg(&repo_root)
+         .arg(&prompt);
+-    cmd.env("CODEX_HOME", home.path())
++    cmd.env("MESHAGENT_CODEX_HOME", home.path())
+         .env(CODEX_API_KEY_ENV_VAR, "dummy");
+ 
+     let output = run_cli_command(&mut cmd).unwrap();
+@@ -601,6 +607,7 @@ async fn integration_creates_and_checks_session_file() -> anyhow::Result<()> {
+     let bin2 = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+     let mut cmd2 = Command::new(bin2);
+     cmd2.arg("exec")
++        .args(["-c", "model_provider=\"openai\""])
+         .arg("--skip-git-repo-check")
+         .arg("-c")
+         .arg(format!("openai_base_url=\"{}/v1\"", server.uri()))
+@@ -609,7 +616,7 @@ async fn integration_creates_and_checks_session_file() -> anyhow::Result<()> {
+         .arg(&prompt2)
+         .arg("resume")
+         .arg("--last");
+-    cmd2.env("CODEX_HOME", home.path())
++    cmd2.env("MESHAGENT_CODEX_HOME", home.path())
+         .env("OPENAI_API_KEY", "dummy");
+ 
+     let output2 = run_cli_command(&mut cmd2).unwrap();
+diff --git a/codex-rs/core/tests/suite/live_cli.rs b/codex-rs/core/tests/suite/live_cli.rs
+index 334ef45..7b6ca9c 100644
+--- a/codex-rs/core/tests/suite/live_cli.rs
++++ b/codex-rs/core/tests/suite/live_cli.rs
+@@ -36,7 +36,7 @@ fn run_live(prompt: &str) -> (assert_cmd::assert::Assert, TempDir) {
+     cmd.current_dir(dir.path());
+     cmd.env("OPENAI_API_KEY", require_api_key());
+     cmd.env("HOME", home.path());
+-    cmd.env("CODEX_HOME", &codex_home);
++    cmd.env("MESHAGENT_CODEX_HOME", &codex_home);
+ 
+     // We want three things at once:
+     //   1. live streaming of the child’s stdout/stderr while the test is running
+diff --git a/codex-rs/core/tests/suite/model_overrides.rs b/codex-rs/core/tests/suite/model_overrides.rs
+index f70c0ae..7955fa1 100644
+--- a/codex-rs/core/tests/suite/model_overrides.rs
++++ b/codex-rs/core/tests/suite/model_overrides.rs
+@@ -11,7 +11,7 @@ const CONFIG_TOML: &str = "config.toml";
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn thread_settings_update_does_not_persist_when_config_exists() {
+     let server = start_mock_server().await;
+-    let initial_contents = "model = \"gpt-4o\"\n";
++    let initial_contents = "model_provider = \"openai\"\nmodel = \"gpt-4o\"\n";
+     let mut builder = test_codex()
+         .with_pre_build_hook(move |home| {
+             let config_path = home.join(CONFIG_TOML);
+@@ -51,6 +51,8 @@ async fn thread_settings_update_does_not_create_config_file() {
+     let test = builder.build(&server).await.expect("create conversation");
+     let codex = test.codex.clone();
+     let config_path = test.home.path().join(CONFIG_TOML);
++    // Remove the fixture provider seed to exercise a home without a user config.
++    std::fs::remove_file(&config_path).expect("remove fixture config");
+     assert!(
+         !config_path.exists(),
+         "test setup should start without config"
+diff --git a/codex-rs/core/tests/suite/multi_exec_server_sandbox.rs b/codex-rs/core/tests/suite/multi_exec_server_sandbox.rs
+index 8928df9..1ea27ed 100644
+--- a/codex-rs/core/tests/suite/multi_exec_server_sandbox.rs
++++ b/codex-rs/core/tests/suite/multi_exec_server_sandbox.rs
+@@ -55,7 +55,7 @@ impl ExecServerProcess {
+         let codex_home = TempDir::new()?;
+         let mut child = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+             .args(["exec-server", "--listen", "ws://127.0.0.1:0"])
+-            .env("CODEX_HOME", codex_home.path())
++            .env("MESHAGENT_CODEX_HOME", codex_home.path())
+             .stdin(Stdio::null())
+             .stdout(Stdio::piped())
+             .stderr(Stdio::inherit())
+diff --git a/codex-rs/core/tests/suite/prompt_debug_tests.rs b/codex-rs/core/tests/suite/prompt_debug_tests.rs
+index 6248dfa..4497fd8 100644
+--- a/codex-rs/core/tests/suite/prompt_debug_tests.rs
++++ b/codex-rs/core/tests/suite/prompt_debug_tests.rs
+@@ -25,6 +25,7 @@ async fn build_prompt_input_includes_context_and_user_message() -> Result<()> {
+         .codex_home(codex_home.path().to_path_buf())
+         .harness_overrides(ConfigOverrides {
+             cwd: Some(cwd.path().to_path_buf()),
++            model_provider: Some("openai".into()),
+             codex_self_exe: Some(std::env::current_exe()?),
+             ..ConfigOverrides::default()
+         })
+diff --git a/codex-rs/core/tests/suite/rmcp_client.rs b/codex-rs/core/tests/suite/rmcp_client.rs
+index 54d31be..62eb790 100644
+--- a/codex-rs/core/tests/suite/rmcp_client.rs
++++ b/codex-rs/core/tests/suite/rmcp_client.rs
+@@ -4227,7 +4227,7 @@ async fn streamable_http_with_oauth_round_trip_impl() -> anyhow::Result<()> {
+     // Phase 3: seed an isolated CODEX_HOME with fallback OAuth tokens for this
+     // server so the test does not share credentials with other suite cases.
+     let temp_home = Arc::new(tempdir()?);
+-    let _codex_home_guard = EnvVarGuard::set("CODEX_HOME", temp_home.path().as_os_str());
++    let _codex_home_guard = EnvVarGuard::set("MESHAGENT_CODEX_HOME", temp_home.path().as_os_str());
+     let unset_authorization_env_var = format!(
+         "CODEX_TEST_UNSET_MCP_OAUTH_AUTHORIZATION_{}",
+         std::process::id()
+diff --git a/codex-rs/core/tests/suite/windows_sandbox.rs b/codex-rs/core/tests/suite/windows_sandbox.rs
+index b9d7b08..7dfe8e2 100644
+--- a/codex-rs/core/tests/suite/windows_sandbox.rs
++++ b/codex-rs/core/tests/suite/windows_sandbox.rs
+@@ -246,7 +246,7 @@ fn windows_sandbox_cli_preserves_managed_deny_reads_across_launches() -> anyhow:
+     for launch in 1..=2 {
+         let output = Command::new(&codex)
+             .current_dir(&work)
+-            .env("CODEX_HOME", codex_home.path())
++            .env("MESHAGENT_CODEX_HOME", codex_home.path())
+             .env("CODEX_WINDOWS_ALLOWED_TEXT", &allowed_text)
+             .env("CODEX_WINDOWS_DENIED_TEXT", &denied_text)
+             .env("CODEX_WINDOWS_ALLOWED_MODULE", &allowed_module)
+@@ -306,7 +306,7 @@ async fn windows_elevated_setup_rejects_default_root_deny() -> anyhow::Result<()
+ async fn windows_restricted_token_rejects_exact_and_glob_deny_read_policy() -> anyhow::Result<()> {
+     let codex_home =
+         codex_home_for_windows_sandbox_test("windows-restricted-token-deny-read-codex-home")?;
+-    let _codex_home_guard = EnvVarGuard::set("CODEX_HOME", codex_home.path().as_os_str());
++    let _codex_home_guard = EnvVarGuard::set("MESHAGENT_CODEX_HOME", codex_home.path().as_os_str());
+     let workspace = TempDir::new()?;
+     let cwd = dunce::canonicalize(workspace.path())?.abs();
+     let secret = cwd.join("secret.env");
+@@ -393,7 +393,7 @@ async fn windows_restricted_token_rejects_exact_and_glob_deny_read_policy() -> a
+ async fn windows_elevated_does_not_create_missing_workspace_metadata() -> anyhow::Result<()> {
+     let codex_home =
+         codex_home_for_windows_sandbox_test("windows-elevated-missing-metadata-codex-home")?;
+-    let _codex_home_guard = EnvVarGuard::set("CODEX_HOME", codex_home.path().as_os_str());
++    let _codex_home_guard = EnvVarGuard::set("MESHAGENT_CODEX_HOME", codex_home.path().as_os_str());
+     stage_windows_sandbox_helpers()?;
+     let workspace = TempDir::new()?;
+     let cwd = dunce::canonicalize(workspace.path())?.abs();
+@@ -517,7 +517,7 @@ $rules = foreach ($name in @('codex_sandbox_offline_block_inbound', 'codex_sandb
+ #[serial(codex_home)]
+ async fn windows_elevated_enforces_deny_read_and_protects_setup_marker() -> anyhow::Result<()> {
+     let codex_home = codex_home_for_windows_sandbox_test("windows-elevated-deny-read-codex-home")?;
+-    let _codex_home_guard = EnvVarGuard::set("CODEX_HOME", codex_home.path().as_os_str());
++    let _codex_home_guard = EnvVarGuard::set("MESHAGENT_CODEX_HOME", codex_home.path().as_os_str());
+     stage_windows_sandbox_helpers()?;
+     let workspace = TempDir::new()?;
+     let cwd = dunce::canonicalize(workspace.path())?.abs();
+@@ -658,7 +658,7 @@ async fn windows_elevated_enforces_deny_read_and_protects_setup_marker() -> anyh
+ async fn windows_elevated_unified_exec_enforces_large_recursive_deny_reads() -> anyhow::Result<()> {
+     let codex_home =
+         codex_home_for_windows_sandbox_test("windows-elevated-tool-runtime-deny-read-codex-home")?;
+-    let _codex_home_guard = EnvVarGuard::set("CODEX_HOME", codex_home.path().as_os_str());
++    let _codex_home_guard = EnvVarGuard::set("MESHAGENT_CODEX_HOME", codex_home.path().as_os_str());
+     stage_windows_sandbox_helpers()?;
+ 
+     let configured_codex_home = dunce::canonicalize(codex_home.path())?.abs();
 diff --git a/codex-rs/login/MESHAGENT_AUTH_SPEC.md b/codex-rs/login/MESHAGENT_AUTH_SPEC.md
 new file mode 100644
 index 0000000..17167d7
@@ -1358,10 +2362,10 @@ index 0000000..17167d7
 +request headers, unauthorized retry, and TUI onboarding behavior. Network tests
 +use local mock servers only.
 diff --git a/codex-rs/login/src/auth/default_client_tests.rs b/codex-rs/login/src/auth/default_client_tests.rs
-index 4565f79..7c7f4ea 100644
+index 92d9bf2..389446a 100644
 --- a/codex-rs/login/src/auth/default_client_tests.rs
 +++ b/codex-rs/login/src/auth/default_client_tests.rs
-@@ -289,7 +289,7 @@ fn test_macos() {
+@@ -354,7 +354,7 @@ fn test_macos() {
      let user_agent = get_codex_user_agent();
      let originator = regex_lite::escape(originator().value.as_str());
      let re = Regex::new(&format!(
@@ -1371,10 +2375,10 @@ index 4565f79..7c7f4ea 100644
      .unwrap();
      assert!(re.is_match(&user_agent));
 diff --git a/codex-rs/login/src/auth/manager.rs b/codex-rs/login/src/auth/manager.rs
-index 2949b70..157b07f 100644
+index 14cfee9..3397a77 100644
 --- a/codex-rs/login/src/auth/manager.rs
 +++ b/codex-rs/login/src/auth/manager.rs
-@@ -2286,6 +2286,16 @@ impl AuthManager {
+@@ -2327,6 +2327,16 @@ impl AuthManager {
      }
  
      pub fn external_bearer_only(config: ModelProviderAuthInfo) -> Arc<Self> {
@@ -1391,7 +2395,7 @@ index 2949b70..157b07f 100644
          let (auth_change_tx, _auth_change_rx) = watch::channel(0);
          Arc::new(Self {
              codex_home: PathBuf::from("non-existent"),
-@@ -2305,10 +2315,9 @@ impl AuthManager {
+@@ -2348,10 +2358,9 @@ impl AuthManager {
              refresh_lock: Semaphore::new(/*permits*/ 1),
              agent_identity_lock: Semaphore::new(/*permits*/ 1),
              agent_identity_bootstrap_cooldown: Mutex::default(),
@@ -1405,7 +2409,7 @@ index 2949b70..157b07f 100644
                  OutboundProxyPolicy::ReqwestDefault,
              )),
 diff --git a/codex-rs/login/src/lib.rs b/codex-rs/login/src/lib.rs
-index 3365972..92ff35a 100644
+index abbbf1d..c049881 100644
 --- a/codex-rs/login/src/lib.rs
 +++ b/codex-rs/login/src/lib.rs
 @@ -1,5 +1,6 @@
@@ -1414,7 +2418,7 @@ index 3365972..92ff35a 100644
 +pub mod meshagent;
  pub mod test_support;
  pub mod token_data;
- 
+ pub use auth::WorkspaceRouting;
 diff --git a/codex-rs/login/src/meshagent/meshagent_tests.rs b/codex-rs/login/src/meshagent/meshagent_tests.rs
 new file mode 100644
 index 0000000..8da3d1f
@@ -2823,10 +3827,10 @@ index 0000000..0b2ef91
 +    "Bearer".to_string()
 +}
 diff --git a/codex-rs/model-provider-info/src/lib.rs b/codex-rs/model-provider-info/src/lib.rs
-index 3fb3e87..d65e24e 100644
+index 5d5b1f9..3d473dd 100644
 --- a/codex-rs/model-provider-info/src/lib.rs
 +++ b/codex-rs/model-provider-info/src/lib.rs
-@@ -38,6 +38,9 @@ const OPENAI_PROVIDER_NAME: &str = "OpenAI";
+@@ -75,6 +75,9 @@ const OPENAI_PROVIDER_NAME: &str = "OpenAI";
  const OPENAI_ACTOR_AUTHORIZATION_HEADER: &str = "x-openai-actor-authorization";
  pub const OPENAI_PROVIDER_ID: &str = "openai";
  pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
@@ -2836,7 +3840,7 @@ index 3fb3e87..d65e24e 100644
  const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
  pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
  const AMAZON_BEDROCK_RUNTIME_PROVIDER_NAME: &str = "Amazon Bedrock Runtime";
-@@ -421,6 +424,29 @@ impl ModelProviderInfo {
+@@ -558,6 +561,32 @@ other non-default provider fields are not supported"
          }
      }
  
@@ -2844,10 +3848,12 @@ index 3fb3e87..d65e24e 100644
 +        ModelProviderInfo {
 +            name: MESHAGENT_PROVIDER_NAME.into(),
 +            base_url: Some(MESHAGENT_DEFAULT_BASE_URL.to_string()),
++            model_catalog_url: None,
 +            env_key: None,
 +            env_key_instructions: None,
 +            experimental_bearer_token: None,
 +            auth: None,
++            gateway_oauth: None,
 +            aws: None,
 +            wire_api: WireApi::Responses,
 +            query_params: None,
@@ -2860,13 +3866,14 @@ index 3fb3e87..d65e24e 100644
 +            requires_openai_auth: false,
 +            supports_websockets: false,
 +            supports_standalone_web_search: true,
++            include_internal_metadata: false,
 +        }
 +    }
 +
      pub fn create_amazon_bedrock_provider(
          aws: Option<ModelProviderAwsAuthInfo>,
      ) -> ModelProviderInfo {
-@@ -469,6 +495,10 @@ impl ModelProviderInfo {
+@@ -609,6 +638,10 @@ other non-default provider fields are not supported"
          self.name == OPENAI_PROVIDER_NAME
      }
  
@@ -2877,7 +3884,7 @@ index 3fb3e87..d65e24e 100644
      pub fn supports_codex_backend_routes(&self) -> bool {
          self.is_openai()
              && self.base_url.as_deref().is_none_or(|base_url| {
-@@ -514,6 +544,7 @@ pub fn built_in_model_providers(
+@@ -654,6 +687,7 @@ pub fn built_in_model_providers(
  ) -> HashMap<String, ModelProviderInfo> {
      use ModelProviderInfo as P;
      let openai_provider = P::create_openai_provider(openai_base_url);
@@ -2885,7 +3892,7 @@ index 3fb3e87..d65e24e 100644
      let amazon_bedrock_provider = P::create_amazon_bedrock_provider(/*aws*/ None);
      let amazon_bedrock_runtime_provider =
          P::create_amazon_bedrock_runtime_provider(/*aws*/ None);
-@@ -524,6 +555,7 @@ pub fn built_in_model_providers(
+@@ -664,6 +698,7 @@ pub fn built_in_model_providers(
      // `model_providers` in config.toml to add their own providers.
      [
          (OPENAI_PROVIDER_ID, openai_provider),
@@ -2917,31 +3924,49 @@ index f4d2764..2f8075a 100644
      }
  
 diff --git a/codex-rs/model-provider/src/models_endpoint.rs b/codex-rs/model-provider/src/models_endpoint.rs
-index 4ccb5b7..18e14a6 100644
+index 6986451..6625ae9 100644
 --- a/codex-rs/model-provider/src/models_endpoint.rs
 +++ b/codex-rs/model-provider/src/models_endpoint.rs
-@@ -35,6 +35,7 @@ use tokio::time::timeout;
+@@ -40,6 +40,7 @@ use crate::auth::ResolvedProviderAuth;
  use crate::auth::agent_identity_telemetry;
  use crate::auth::resolve_provider_auth;
- use crate::provider::enforce_managed_residency;
+ use crate::combined_auth::compose_auth;
 +use crate::provider::runtime_provider_info;
  
  const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
  const MODELS_ENDPOINT: &str = "/models";
-@@ -82,9 +83,10 @@ impl OpenAiModelsEndpoint {
-             codex_otel::start_global_timer("codex.remote_models.fetch_update.duration_ms", &[]);
-         let auth = self.auth().await;
+@@ -107,9 +108,10 @@ impl OpenAiModelsEndpoint {
+             "codex.remote_models.fetch_update.duration_ms",
+             &[("auth_mode", metric_auth_mode)],
+         );
+-        let identity = crate::models_identity::identity(&self.provider_info, auth.as_ref())?;
++        let provider_info = runtime_provider_info(self.provider_info.clone())?;
++        let identity = crate::models_identity::identity(&provider_info, auth.as_ref())?;
          let auth_mode = auth.as_ref().map(CodexAuth::auth_mode);
 -        let mut api_provider = self.provider_info.to_api_provider(auth_mode)?;
-+        let provider_info = runtime_provider_info(self.provider_info.clone())?;
 +        let mut api_provider = provider_info.to_api_provider(auth_mode)?;
-         enforce_managed_residency(&mut api_provider);
--        let api_auth = resolve_provider_auth(auth.as_ref(), &self.provider_info)?;
-+        let api_auth = resolve_provider_auth(auth.as_ref(), &provider_info)?;
-         let request_url =
-             ModelsClient::<ReqwestTransport>::request_url(&api_provider, client_version);
-         let auth_telemetry = auth_header_telemetry(api_auth.as_ref());
-@@ -130,6 +132,10 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
+         if (auth.as_ref().is_some_and(CodexAuth::is_api_key_auth) || self.has_provider_api_key())
+             && self.supports_api_key_models()
+             && self.provider_info.base_url.is_none()
+@@ -121,7 +123,7 @@ impl OpenAiModelsEndpoint {
+         let resolved = compose_auth(
+             &self.provider_info,
+             self.gateway_auth_manager.as_ref(),
+-            ResolvedProviderAuth::new(resolve_provider_auth(auth.as_ref(), &self.provider_info)?),
++            ResolvedProviderAuth::new(resolve_provider_auth(auth.as_ref(), &provider_info)?),
+         )
+         .await?;
+         let api_auth = resolved.auth;
+@@ -225,13 +227,18 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
+             .auth_manager
+             .as_ref()
+             .and_then(|manager| manager.auth_cached());
+-        crate::models_identity::identity(&self.provider_info, auth.as_ref()).ok()
++        let provider_info = runtime_provider_info(self.provider_info.clone()).ok()?;
++        crate::models_identity::identity(&provider_info, auth.as_ref()).ok()
+     }
+ 
+     fn has_command_auth(&self) -> bool {
          self.provider_info.has_command_auth()
      }
  
@@ -2953,19 +3978,28 @@ index 4ccb5b7..18e14a6 100644
          Box::pin(OpenAiModelsEndpoint::uses_codex_backend(self))
      }
 diff --git a/codex-rs/model-provider/src/provider.rs b/codex-rs/model-provider/src/provider.rs
-index 027850b..383499f 100644
+index 7d99c55..9d762c6 100644
 --- a/codex-rs/model-provider/src/provider.rs
 +++ b/codex-rs/model-provider/src/provider.rs
 @@ -14,6 +14,7 @@ use codex_login::CodexAuth;
- use codex_login::default_client::RESIDENCY_HEADER_NAME;
- use codex_login::default_client::ResidencyRequirement;
- use codex_login::default_client::read_default_client_residency_requirement;
+ use codex_login::GatewayAuthManager;
+ use codex_login::WorkspaceRoutingRequest;
+ use codex_login::default_client::ClientRedirectPolicy;
 +use codex_login::meshagent::MeshAgentAuth;
  use codex_model_provider_info::ModelProviderInfo;
  use codex_models_manager::cache::ModelsCache;
  use codex_models_manager::manager::OpenAiModelsManager;
-@@ -343,6 +344,53 @@ impl ConfiguredModelProvider {
-             auth_manager,
+@@ -446,11 +447,59 @@ impl ConfiguredModelProvider {
+                 OpenAiModelsManager::new_with_cache(cache, endpoint, auth_manager)
+             }
+         };
+-        match &self.info.model_catalog_url {
+-            Some(_) => Arc::new(manager.with_provider_catalog()),
+-            None => Arc::new(manager),
++        if self.info.model_catalog_url.is_some() || self.info.is_meshagent() {
++            Arc::new(manager.with_provider_catalog())
++        } else {
++            Arc::new(manager)
          }
      }
 +
@@ -3018,17 +4052,16 @@ index 027850b..383499f 100644
  }
  
  impl ModelProvider for ConfiguredModelProvider {
-@@ -441,6 +489,23 @@ impl ModelProvider for ConfiguredModelProvider {
+@@ -594,6 +643,22 @@ impl ModelProvider for ConfiguredModelProvider {
          })
      }
  
 +    fn api_provider(&self) -> ModelProviderFuture<'_, codex_protocol::error::Result<Provider>> {
 +        Box::pin(async move {
 +            let auth = self.auth().await;
-+            let mut provider = self
++            let provider = self
 +                .runtime_info()?
 +                .to_api_provider(auth.as_ref().map(CodexAuth::auth_mode))?;
-+            enforce_managed_residency(&mut provider);
 +            Ok(provider)
 +        })
 +    }
@@ -3042,9 +4075,9 @@ index 027850b..383499f 100644
      fn models_manager(
          &self,
          codex_home: PathBuf,
-@@ -1210,4 +1275,23 @@ mod tests {
-                 .any(|model| model.slug == "provider-model")
-         );
+@@ -1441,4 +1506,23 @@ printf '%s\n' '{"AccessKeyId":"exported","SecretAccessKey":"secret"}'
+             }
+         }
      }
 +
 +    #[test]
@@ -3067,10 +4100,10 @@ index 027850b..383499f 100644
 +    }
  }
 diff --git a/codex-rs/models-manager/src/manager.rs b/codex-rs/models-manager/src/manager.rs
-index 45835c3..396d82d 100644
+index af73444..d8be9a3 100644
 --- a/codex-rs/models-manager/src/manager.rs
 +++ b/codex-rs/models-manager/src/manager.rs
-@@ -38,6 +38,11 @@ pub trait ModelsEndpointClient: fmt::Debug + Send + Sync {
+@@ -49,6 +49,11 @@ pub trait ModelsEndpointClient: fmt::Debug + Send + Sync {
      /// Returns whether this provider can authenticate command-scoped requests.
      fn has_command_auth(&self) -> bool;
  
@@ -3082,33 +4115,197 @@ index 45835c3..396d82d 100644
      /// Returns whether the currently resolved auth can use Codex backend-only models.
      fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool>;
  
-@@ -435,7 +440,9 @@ impl OpenAiModelsManager {
-     }
- 
-     async fn should_refresh_models(&self) -> bool {
--        self.endpoint_client.uses_codex_backend().await || self.endpoint_client.has_command_auth()
-+        self.endpoint_client.uses_codex_backend().await
-+            || self.endpoint_client.has_command_auth()
+@@ -666,6 +671,7 @@ impl OpenAiModelsManager {
+         self.endpoint_client.uses_codex_backend().await
+             || self.endpoint_client.has_command_auth()
+             || self.supports_api_key_discovery()
 +            || self.endpoint_client.has_provider_remote_catalog()
      }
  
-     async fn get_etag(&self) -> Option<String> {
+     /// Publish only while the request identity still matches, including after async storage.
+diff --git a/codex-rs/rmcp-client/src/enterprise_oauth_login_tests.rs b/codex-rs/rmcp-client/src/enterprise_oauth_login_tests.rs
+index b651d76..85095d8 100644
+--- a/codex-rs/rmcp-client/src/enterprise_oauth_login_tests.rs
++++ b/codex-rs/rmcp-client/src/enterprise_oauth_login_tests.rs
+@@ -46,7 +46,7 @@ async fn isolated_process(test_name: &str) -> Result<bool> {
+     let output = tokio::process::Command::new(std::env::current_exe()?)
+         .args(["--exact", test_name, "--nocapture"])
+         .env(CHILD, "1")
+-        .env("CODEX_HOME", home.path())
++        .env("MESHAGENT_CODEX_HOME", home.path())
+         .current_dir(home.path())
+         .output()
+         .await?;
+@@ -412,7 +412,7 @@ async fn enterprise_public_api_storage_and_privacy() -> Result<()> {
+         assert!(!format!("{error} {error:?} {error:#}").contains(SECRET));
+     }
+     keyring.fail.store(false, Ordering::SeqCst);
+-    let home = std::path::PathBuf::from(std::env::var("CODEX_HOME")?);
++    let home = std::path::PathBuf::from(std::env::var("MESHAGENT_CODEX_HOME")?);
+     assert!(
+         !home.join(".credentials.json").exists(),
+         "enterprise storage never falls back to plaintext"
+diff --git a/codex-rs/rmcp-client/src/enterprise_oauth_logout_tests.rs b/codex-rs/rmcp-client/src/enterprise_oauth_logout_tests.rs
+index 974ba72..c1ba5e8 100644
+--- a/codex-rs/rmcp-client/src/enterprise_oauth_logout_tests.rs
++++ b/codex-rs/rmcp-client/src/enterprise_oauth_logout_tests.rs
+@@ -18,7 +18,7 @@ async fn logout_invalidates_pending_login_across_processes() -> Result<()> {
+     if isolated_process(TEST).await? {
+         return Ok(());
+     }
+-    let home = PathBuf::from(std::env::var("CODEX_HOME")?);
++    let home = PathBuf::from(std::env::var("MESHAGENT_CODEX_HOME")?);
+     let keyring = FileKeyring(home.join("test-keyring"));
+     fs::create_dir_all(&keyring.0)?;
+     keyring::set_default_credential_builder(Box::new(keyring));
+diff --git a/codex-rs/rmcp-client/src/oauth/test_support.rs b/codex-rs/rmcp-client/src/oauth/test_support.rs
+index 208d11b..51fc977 100644
+--- a/codex-rs/rmcp-client/src/oauth/test_support.rs
++++ b/codex-rs/rmcp-client/src/oauth/test_support.rs
+@@ -47,7 +47,7 @@ impl TempCodexHome {
+             .unwrap_or_else(PoisonError::into_inner);
+         let dir = tempdir().expect("create CODEX_HOME temp dir");
+         unsafe {
+-            std::env::set_var("CODEX_HOME", dir.path());
++            std::env::set_var("MESHAGENT_CODEX_HOME", dir.path());
+         }
+         Self {
+             _guard: guard,
+@@ -63,7 +63,7 @@ impl TempCodexHome {
+ impl Drop for TempCodexHome {
+     fn drop(&mut self) {
+         unsafe {
+-            std::env::remove_var("CODEX_HOME");
++            std::env::remove_var("MESHAGENT_CODEX_HOME");
+         }
+     }
+ }
+diff --git a/codex-rs/rmcp-client/src/oauth/tests/store_lock_tests.rs b/codex-rs/rmcp-client/src/oauth/tests/store_lock_tests.rs
+index b8428f5..4bab013 100644
+--- a/codex-rs/rmcp-client/src/oauth/tests/store_lock_tests.rs
++++ b/codex-rs/rmcp-client/src/oauth/tests/store_lock_tests.rs
+@@ -195,7 +195,7 @@ fn store_lock_is_released_when_holder_process_exits() -> Result<()> {
+         .arg("--exact")
+         .arg(LOCK_HOLDER_CHILD_TEST)
+         .arg("--ignored")
+-        .env("CODEX_HOME", env.path())
++        .env("MESHAGENT_CODEX_HOME", env.path())
+         .env(LOCK_HOLDER_READY_PATH_ENV, &ready_file)
+         .spawn()
+         .context("spawn OAuth store lock holder test process")?;
+diff --git a/codex-rs/rmcp-client/tests/streamable_http_oauth_startup.rs b/codex-rs/rmcp-client/tests/streamable_http_oauth_startup.rs
+index 57604d3..8a84dfc 100644
+--- a/codex-rs/rmcp-client/tests/streamable_http_oauth_startup.rs
++++ b/codex-rs/rmcp-client/tests/streamable_http_oauth_startup.rs
+@@ -161,7 +161,7 @@ async fn tool_call_preserves_challenge_only_after_silent_refresh_fails() -> anyh
+                 "--ignored",
+                 "--nocapture",
+             ])
+-            .env("CODEX_HOME", codex_home.path())
++            .env("MESHAGENT_CODEX_HOME", codex_home.path())
+             .env(CHILD_SERVER_URL_ENV, server_url)
+             .env(CHILD_REFRESH_SUCCEEDS_ENV, refresh_succeeds.to_string())
+             .status()
+@@ -285,7 +285,7 @@ async fn rejects_confidential_client_id_mismatch_before_contacting_provider() ->
+     let codex_home = TempDir::new()?;
+     let status = Command::new(std::env::current_exe()?)
+         .args(["oauth_startup_child", "--exact", "--ignored", "--nocapture"])
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .env(CHILD_SERVER_URL_ENV, format!("{}/mcp", server.uri()))
+         .env(CHILD_STORED_ISSUER_ENV, server.uri())
+         .env(CHILD_RESOURCE_API_KEY_ENV, RESOURCE_API_KEY)
+@@ -571,7 +571,7 @@ async fn assert_expired_token_refresh(
+     let mut command = Command::new(std::env::current_exe()?);
+     command
+         .args(["oauth_startup_child", "--exact", "--ignored", "--nocapture"])
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .env(CHILD_SERVER_URL_ENV, server_url)
+         .env(CHILD_STORED_ISSUER_ENV, authorization_server_issuer)
+         .env(CHILD_RESOURCE_API_KEY_ENV, RESOURCE_API_KEY)
+@@ -749,7 +749,7 @@ async fn run_issuer_startup_child(
+             "--ignored",
+             "--nocapture",
+         ])
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .env(CHILD_SERVER_URL_ENV, server_url)
+         .env(CHILD_STORED_ISSUER_ENV, stored_issuer)
+         .env(CHILD_ACCESS_TOKEN_EXPIRY_ENV, access_token_expiry)
+@@ -874,7 +874,7 @@ async fn reports_auth_status_for_persisted_credentials() -> anyhow::Result<()> {
+             "--ignored",
+             "--nocapture",
+         ])
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .status()
+         .await?;
+ 
+@@ -906,7 +906,7 @@ async fn identifies_expired_unrefreshable_token_startup_error() -> anyhow::Resul
+             "--ignored",
+             "--nocapture",
+         ])
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .env(CHILD_SERVER_URL_ENV, format!("{}/mcp", server.uri()))
+         .status()
+         .await?;
+diff --git a/codex-rs/rmcp-client/tests/streamable_http_oauth_store_pinning.rs b/codex-rs/rmcp-client/tests/streamable_http_oauth_store_pinning.rs
+index abbd237..0d14e11 100644
+--- a/codex-rs/rmcp-client/tests/streamable_http_oauth_store_pinning.rs
++++ b/codex-rs/rmcp-client/tests/streamable_http_oauth_store_pinning.rs
+@@ -241,7 +241,7 @@ async fn auto_store_remains_pinned_across_session_recovery() -> anyhow::Result<(
+             "--ignored",
+             "--nocapture",
+         ])
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .env(CHILD_SERVER_URL_ENV, &base_url)
+         .status()
+         .await?;
+diff --git a/codex-rs/rmcp-client/tests/streamable_http_oauth_tool_call.rs b/codex-rs/rmcp-client/tests/streamable_http_oauth_tool_call.rs
+index c620410..f7f3d32 100644
+--- a/codex-rs/rmcp-client/tests/streamable_http_oauth_tool_call.rs
++++ b/codex-rs/rmcp-client/tests/streamable_http_oauth_tool_call.rs
+@@ -72,7 +72,7 @@ async fn run_scenarios(scenarios: &[&str]) -> anyhow::Result<()> {
+         let home = TempDir::new()?;
+         let output = Command::new(std::env::current_exe()?)
+             .args(["runtime_oauth_child", "--exact", "--ignored", "--nocapture"])
+-            .env("CODEX_HOME", home.path())
++            .env("MESHAGENT_CODEX_HOME", home.path())
+             .env(SCENARIO_ENV, scenario)
+             .output()
+             .await?;
+diff --git a/codex-rs/rmcp-client/tests/streamable_http_test_support.rs b/codex-rs/rmcp-client/tests/streamable_http_test_support.rs
+index e7d6e2c..392c1c3 100644
+--- a/codex-rs/rmcp-client/tests/streamable_http_test_support.rs
++++ b/codex-rs/rmcp-client/tests/streamable_http_test_support.rs
+@@ -353,7 +353,7 @@ pub(crate) async fn spawn_exec_server() -> anyhow::Result<ExecServerProcess> {
+         .stdout(Stdio::piped())
+         .stderr(Stdio::inherit())
+         .kill_on_drop(true)
+-        .env("CODEX_HOME", codex_home.path())
++        .env("MESHAGENT_CODEX_HOME", codex_home.path())
+         .spawn()?;
+ 
+     let websocket_url = read_exec_server_listen_url(&mut child).await?;
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index d2ea7c5..ea00223 100644
+index da28bf2..4b25e8a 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -20,6 +20,7 @@ use crate::session_resume::cwds_differ;
+@@ -21,6 +21,7 @@ use codex_app_server_client::AppServerEvent;
  use codex_app_server_protocol::ThreadGoalStatus;
  #[cfg(target_os = "windows")]
- use codex_config::types::WindowsSandboxModeToml;
+ use codex_app_server_protocol::WindowsSandboxSetupMode;
 +use codex_login::meshagent::MeshAgentAuth;
  
- const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
+ pub(super) const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
  
-@@ -62,6 +63,20 @@ impl App {
-         }
- 
-         match event {
+@@ -141,6 +142,20 @@ impl App {
+                 self.continue_misalignment(app_server, review).await;
+             }
+             AppEvent::CloseMisalignmentReview => self.chat_widget.show_misalignment_policy_precaution(),
 +            AppEvent::MeshAgentProjectsLoaded { result } => {
 +                self.chat_widget.show_meshagent_project_popup(result);
 +            }
@@ -3124,9 +4321,9 @@ index d2ea7c5..ea00223 100644
 +                );
 +            }
              AppEvent::SkillsListLoaded { ref cwd, .. }
-             | AppEvent::PluginMentionsLoaded { ref cwd, .. }
-                 if cwds_differ(cwd, self.config.cwd.as_path()) => {}
-@@ -705,19 +720,33 @@ impl App {
+                 if cwds_differ(cwd, self.config.cwd.as_path()) =>
+             {
+@@ -977,19 +992,33 @@ impl App {
                      }
                  }
              },
@@ -3172,8 +4369,241 @@ index d2ea7c5..ea00223 100644
              AppEvent::FatalExitRequest(message) => {
                  return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
              }
+diff --git a/codex-rs/tui/src/app/experimental_features_tests.rs b/codex-rs/tui/src/app/experimental_features_tests.rs
+index 0b8920c..67243ed 100644
+--- a/codex-rs/tui/src/app/experimental_features_tests.rs
++++ b/codex-rs/tui/src/app/experimental_features_tests.rs
+@@ -10,7 +10,10 @@ async fn experimental_features_use_selected_server_profile_and_preserve_task_set
+     let selected = AbsolutePathBuf::from_absolute_path(home.path().join("work.config.toml"))?;
+     let managed = home.path().join("managed.toml");
+     std::fs::write(home.path().join("config.toml"), "# unselected\n")?;
+-    std::fs::write(&selected, "[features]\nnetwork_proxy = true\n")?;
++    std::fs::write(
++        &selected,
++        "model_provider = \"openai\"\n[features]\nnetwork_proxy = true\n",
++    )?;
+     std::fs::write(&managed, "")?;
+     let loader = LoaderOverrides {
+         user_config_path: Some(selected.clone()),
+@@ -73,7 +76,7 @@ async fn experimental_features_use_selected_server_profile_and_preserve_task_set
+     let saved: toml::Value = toml::from_str(&std::fs::read_to_string(&selected)?)?;
+     assert_eq!(
+         serde_json::to_value(saved)?,
+-        serde_json::json!({"features": {"multi_agent": false, "memories": true}})
++        serde_json::json!({"model_provider": "openai", "features": {"multi_agent": false, "memories": true}})
+     );
+     assert_eq!(
+         (app.config.clone(), app.chat_widget.config_ref().clone()),
+diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
+index 9c1af27..f6faa39 100644
+--- a/codex-rs/tui/src/app/tests.rs
++++ b/codex-rs/tui/src/app/tests.rs
+@@ -5973,7 +5973,7 @@ async fn ctrl_l_clears_owned_history_and_preserves_the_draft() -> Result<()> {
+             .is::<history_cell::SessionHeaderHistoryCell>()
+     );
+     let header = lines_to_single_string(&app.transcript_cells[0].display_lines(/*width*/ 80));
+-    assert!(header.contains("OpenAI Codex"));
++    assert!(header.contains("MeshAgent Codex"));
+     let raw_header = lines_to_single_string(&app.transcript_cells[0].raw_lines());
+     assert!(raw_header.contains("gpt-test"));
+     assert!(!header.contains("old transcript row"));
+@@ -7945,7 +7945,7 @@ async fn in_app_resume_uses_configured_or_explicit_cwd() -> Result<()> {
+     ] {
+         std::fs::write(
+             codex_home.join("config.toml"),
+-            format!("[tui]\nresume_cwd = \"{configured_mode}\"\n"),
++            format!("model_provider = \"openai\"\n[tui]\nresume_cwd = \"{configured_mode}\"\n"),
+         )?;
+         for cwd in [
+             &launch_cwd,
+@@ -8091,6 +8091,10 @@ async fn remembered_current_cwd_stays_at_launch_across_in_app_resumes() -> Resul
+     std::fs::create_dir_all(&active_cwd)?;
+     std::fs::create_dir_all(&first_session_cwd)?;
+     std::fs::create_dir_all(&second_session_cwd)?;
++    std::fs::write(
++        codex_home.join("config.toml"),
++        "model_provider = \"openai\"\n",
++    )?;
+     crate::legacy_core::config::set_project_trust_level(
+         &codex_home,
+         &launch_cwd,
+diff --git a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
+index 5512cdb..7484700 100644
+--- a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
++++ b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
+@@ -243,7 +243,7 @@ async fn command_center_new_reads_server_defaults_for_actual_destination() -> Re
+                 if mode == "local-default-provider" {
+                     "model_provider = \"ollama\"\n"
+                 } else {
+-                    ""
++                    "model_provider = \"openai\"\n"
+                 }
+             ),
+         )?;
+@@ -259,7 +259,7 @@ async fn command_center_new_reads_server_defaults_for_actual_destination() -> Re
+                 if mode == "local" || mode == "local-cli-provider" || mode == "local-cli-model" {
+                     "model_provider = \"ollama\"\n"
+                 } else {
+-                    ""
++                    "model_provider = \"openai\"\n"
+                 }
+             ),
+         )?;
+diff --git a/codex-rs/tui/src/app/tests/daybreak_tests.rs b/codex-rs/tui/src/app/tests/daybreak_tests.rs
+index f7b9629..42bf3ee 100644
+--- a/codex-rs/tui/src/app/tests/daybreak_tests.rs
++++ b/codex-rs/tui/src/app/tests/daybreak_tests.rs
+@@ -19,7 +19,10 @@ async fn cyber_refusal_reads_eligibility_without_changing_the_model() -> Result<
+     // Embedded account discovery reloads the bootstrap URL from disk.
+     std::fs::write(
+         app.config.codex_home.join("config.toml"),
+-        format!("chatgpt_base_url = {:?}\n", backend.uri()),
++        format!(
++            "model_provider = \"openai\"\nchatgpt_base_url = {:?}\n",
++            backend.uri()
++        ),
+     )?;
+     app_test_support::mount_workspace_routing(&backend).await;
+     app.config.cli_auth_credentials_store_mode = AuthCredentialsStoreMode::File;
+diff --git a/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs b/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
+index b18a99e..6eab1f9 100644
+--- a/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
++++ b/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
+@@ -19,7 +19,7 @@ async fn remote_fork_dispatch_preserves_server_workspace_roots() -> Result<()> {
+         std::fs::write(
+             home.path().join("config.toml"),
+             format!(
+-                "sandbox_mode = \"workspace-write\"\n[sandbox_workspace_write]\nwritable_roots = [{root}]\n"
++                "model_provider = \"openai\"\nsandbox_mode = \"workspace-write\"\n[sandbox_workspace_write]\nwritable_roots = [{root}]\n"
+             ),
+         )?;
+     }
+diff --git a/codex-rs/tui/src/app/tests/security_setup_tests.rs b/codex-rs/tui/src/app/tests/security_setup_tests.rs
+index b2e8bf8..ac0e479 100644
+--- a/codex-rs/tui/src/app/tests/security_setup_tests.rs
++++ b/codex-rs/tui/src/app/tests/security_setup_tests.rs
+@@ -22,7 +22,10 @@ async fn security_setup_fetch_with_default_features_uses_authenticated_codex_end
+     app.config.cli_auth_credentials_store_mode = AuthCredentialsStoreMode::File;
+     std::fs::write(
+         app.config.codex_home.join("config.toml"),
+-        format!("chatgpt_base_url = {:?}\n", backend.uri()),
++        format!(
++            "model_provider = \"openai\"\nchatgpt_base_url = {:?}\n",
++            backend.uri()
++        ),
+     )?;
+     write_chatgpt_auth(
+         &app.config.codex_home,
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__daemon_command_center_vanished_rename.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__daemon_command_center_vanished_rename.snap
+index 9ccef21..5d35e27 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__daemon_command_center_vanished_rename.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__daemon_command_center_vanished_rename.snap
+@@ -25,4 +25,4 @@ expression: "render_bottom_popup(&app.chat_widget, 100)"
+                                                           │
+                                                           │
+                                                           │
+-  Service v2.0.0 ≠ Codex CLI v0.0.0 · /daemon
++  Service v2.0.0 ≠ Codex CLI v0.160.0-meshagent.1 · /daemon
+diff --git a/codex-rs/tui/src/app/tests/startup_defaults_tests.rs b/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
+index 22e27ed..b3026fe 100644
+--- a/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
++++ b/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
+@@ -46,7 +46,7 @@ async fn cli_fork_omits_implicit_model_and_effort() -> Result<()> {
+     let home = tempdir()?;
+     std::fs::write(
+         home.path().join("config.toml"),
+-        "model = \"gpt-5.5\"\nmodel_reasoning_effort = \"low\"\nfeatures.fast_mode = true\n",
++        "model_provider = \"openai\"\nmodel = \"gpt-5.5\"\nmodel_reasoning_effort = \"low\"\nfeatures.fast_mode = true\n",
+     )?;
+     let config = ConfigBuilder::default()
+         .codex_home(home.path().to_path_buf())
+@@ -99,7 +99,7 @@ async fn cli_fork_omits_implicit_model_and_effort() -> Result<()> {
+     );
+     std::fs::write(
+         home.path().join("config.toml"),
+-        "model = \"server-model\"\nmodel_reasoning_effort = \"high\"\n",
++        "model_provider = \"openai\"\nmodel = \"server-model\"\nmodel_reasoning_effort = \"high\"\n",
+     )?;
+     let mut tui = crate::tui::test_support::make_test_tui()?;
+     let mut run = Box::pin(run_startup_for_test(
+@@ -189,11 +189,11 @@ async fn fresh_startup_uses_server_defaults_with_explicit_and_managed_precedence
+         let server_home = tempdir()?;
+         std::fs::write(
+             client_home.path().join("config.toml"),
+-            "model = \"client-model\"\nmodel_reasoning_effort = \"low\"\n",
++            "model_provider = \"openai\"\nmodel = \"client-model\"\nmodel_reasoning_effort = \"low\"\n",
+         )?;
+         std::fs::write(
+             server_home.path().join("config.toml"),
+-            "model = \"server-model\"\nmodel_reasoning_effort = \"high\"\n",
++            "model_provider = \"openai\"\nmodel = \"server-model\"\nmodel_reasoning_effort = \"high\"\n",
+         )?;
+         if managed {
+             std::fs::write(
+@@ -215,9 +215,9 @@ async fn fresh_startup_uses_server_defaults_with_explicit_and_managed_precedence
+                 std::fs::write(
+                     &path,
+                     if choice == "profile_model" {
+-                        "model = \"profile-model\"\n"
++                        "model_provider = \"openai\"\nmodel = \"profile-model\"\n"
+                     } else {
+-                        "model_reasoning_effort = \"low\"\n"
++                        "model_provider = \"openai\"\nmodel_reasoning_effort = \"low\"\n"
+                     },
+                 )?;
+                 loader_overrides.user_config_path = Some(path.abs());
+@@ -311,11 +311,11 @@ async fn fresh_startup_reads_destination_and_cleared_model_uses_catalog() -> Res
+         let launch_cwd = tempdir()?;
+         std::fs::write(
+             client_home.path().join("config.toml"),
+-            "model = \"stale-client-model\"\nmodel_reasoning_effort = \"low\"\n",
++            "model_provider = \"openai\"\nmodel = \"stale-client-model\"\nmodel_reasoning_effort = \"low\"\n",
+         )?;
+         std::fs::write(
+             server_home.path().join("config.toml"),
+-            "model_reasoning_effort = \"high\"\nsandbox_mode = \"read-only\"\n",
++            "model_provider = \"openai\"\nmodel_reasoning_effort = \"high\"\nsandbox_mode = \"read-only\"\n",
+         )?;
+         let mut config = ConfigBuilder::default()
+             .codex_home(client_home.path().to_path_buf())
+@@ -432,7 +432,7 @@ async fn fresh_startup_falls_back_only_for_unsupported_config_read() -> Result<(
+         let home = tempdir()?;
+         std::fs::write(
+             home.path().join("config.toml"),
+-            "model = \"client-model\"\nmodel_reasoning_effort = \"low\"\n",
++            "model_provider = \"openai\"\nmodel = \"client-model\"\nmodel_reasoning_effort = \"low\"\n",
+         )?;
+         let config = ConfigBuilder::default()
+             .codex_home(home.path().to_path_buf())
+@@ -473,11 +473,11 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
+     let server_home = tempdir()?;
+     std::fs::write(
+         client_home.path().join("config.toml"),
+-        "model = \"client-model\"\nmodel_reasoning_effort = \"low\"\n",
++        "model_provider = \"openai\"\nmodel = \"client-model\"\nmodel_reasoning_effort = \"low\"\n",
+     )?;
+     std::fs::write(
+         server_home.path().join("config.toml"),
+-        "model = \"server-model\"\nmodel_reasoning_effort = \"high\"\n",
++        "model_provider = \"openai\"\nmodel = \"server-model\"\nmodel_reasoning_effort = \"high\"\n",
+     )?;
+     let config = ConfigBuilder::default()
+         .codex_home(client_home.path().to_path_buf())
+diff --git a/codex-rs/tui/src/app/tests/startup_frame_tests.rs b/codex-rs/tui/src/app/tests/startup_frame_tests.rs
+index c836d54..ac43c21 100644
+--- a/codex-rs/tui/src/app/tests/startup_frame_tests.rs
++++ b/codex-rs/tui/src/app/tests/startup_frame_tests.rs
+@@ -162,7 +162,7 @@ async fn owned_startup_preserves_loading_until_resume_replay_is_applied() -> Res
+         if has_answer {
+             assert!(rendered.contains("Retained answer after resume."));
+         } else {
+-            assert!(rendered.contains("OpenAI Codex"));
++            assert!(rendered.contains("MeshAgent Codex"));
+         }
+         tui.set_owned_screen(/*owned*/ false)?;
+         app_server.shutdown().await?;
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 1592aef..725deb8 100644
+index ce30da4..a9fb627 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -37,6 +37,7 @@ use codex_app_server_protocol::ThreadGoalStatus;
@@ -3184,7 +4614,7 @@ index 1592aef..725deb8 100644
  use codex_message_history::HistoryBatchCursor;
  use codex_protocol::ThreadId;
  use codex_protocol::openai_models::ModelPreset;
-@@ -222,6 +223,16 @@ pub(crate) struct AgentsOverviewThreadRefresh {
+@@ -278,6 +279,16 @@ pub(crate) struct AgentsOverviewThreadRefresh {
  #[allow(clippy::large_enum_variant)]
  #[derive(Debug, IntoStaticStr)]
  pub(crate) enum AppEvent {
@@ -3198,33 +4628,76 @@ index 1592aef..725deb8 100644
 +        project_name: String,
 +        result: Result<(), String>,
 +    },
-     /// Open the daemon-wide overview of recent and locally retained root sessions.
-     OpenAgentsOverview,
-     /// Update the daemon-wide overview after a background thread listing finishes.
-diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
-index 8bbb689..57d753f 100644
---- a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
-+++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
-@@ -3,6 +3,7 @@ source: tui/src/bottom_pane/command_popup.rs
- expression: commands
- ---
- /model - choose what model and reasoning effort to use
-+/project - choose the active MeshAgent project
- /ide - include current selection, open files, and other context from your IDE
- /permissions - choose what Codex is allowed to do
- /keymap - remap TUI shortcuts
+     SecuritySetupLoaded {
+         request_id: uuid::Uuid,
+         identity: crate::security_setup::Identity,
+diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
+index f45e2b1..6ba1dad 100644
+--- a/codex-rs/tui/src/app_server_session.rs
++++ b/codex-rs/tui/src/app_server_session.rs
+@@ -2536,6 +2536,11 @@ mod tests {
+     use tempfile::TempDir;
+ 
+     async fn build_config(temp_dir: &TempDir) -> Config {
++        std::fs::write(
++            temp_dir.path().join("config.toml"),
++            "model_provider = \"openai\"\n",
++        )
++        .expect("fixture provider");
+         ConfigBuilder::default()
+             .codex_home(temp_dir.path().to_path_buf())
+             .build()
+diff --git a/codex-rs/tui/src/app_server_session/prompt_history_tests.rs b/codex-rs/tui/src/app_server_session/prompt_history_tests.rs
+index 28092d3..852f67b 100644
+--- a/codex-rs/tui/src/app_server_session/prompt_history_tests.rs
++++ b/codex-rs/tui/src/app_server_session/prompt_history_tests.rs
+@@ -27,6 +27,10 @@ async fn lifecycle_metadata_uses_local_prompt_history() -> Result<()> {
+ 
+     for mode in [ThreadParamsMode::Embedded, ThreadParamsMode::Remote] {
+         let server_home = tempfile::tempdir()?;
++        std::fs::write(
++            server_home.path().join("config.toml"),
++            "model_provider = \"openai\"\n",
++        )?;
+         let mut config = ConfigBuilder::default()
+             .codex_home(server_home.path().to_path_buf())
+             .build()
+diff --git a/codex-rs/tui/src/app_server_session/rollout_history_tests.rs b/codex-rs/tui/src/app_server_session/rollout_history_tests.rs
+index 0a6cd18..6fd2cbf 100644
+--- a/codex-rs/tui/src/app_server_session/rollout_history_tests.rs
++++ b/codex-rs/tui/src/app_server_session/rollout_history_tests.rs
+@@ -15,6 +15,10 @@ use pretty_assertions::assert_eq;
+ use tempfile::TempDir;
+ 
+ async fn build_config(temp_dir: &TempDir) -> Config {
++    let config_path = temp_dir.path().join("config.toml");
++    if !config_path.exists() {
++        std::fs::write(config_path, "model_provider = \"openai\"\n").expect("fixture provider");
++    }
+     ConfigBuilder::default()
+         .codex_home(temp_dir.path().to_path_buf())
+         .build()
+@@ -27,7 +31,7 @@ async fn remote_resume_restores_saved_server_profile_without_permission_override
+     let home = tempfile::tempdir()?;
+     std::fs::write(
+         home.path().join("config.toml"),
+-        "default_permissions = \":workspace\"\n[permissions.server-only]\nextends = \":read-only\"\n",
++        "model_provider = \"openai\"\ndefault_permissions = \":workspace\"\n[permissions.server-only]\nextends = \":read-only\"\n",
+     )?;
+     let config = build_config(&home).await;
+     let client_config = ConfigBuilder::default()
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 40eadfa..c47c657 100644
+index 7fafd6d..d1da687 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
-@@ -388,6 +388,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
+@@ -323,6 +323,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
  mod model_popup_state;
  mod model_popups;
  mod notifications;
 +mod project_popup;
+ mod session_model_selection;
  use self::notifications::Notification;
- mod permission_popups;
- mod permission_shortcuts;
+ pub(crate) use self::session_model_selection::AstraModelPickerAction;
 diff --git a/codex-rs/tui/src/chatwidget/project_popup.rs b/codex-rs/tui/src/chatwidget/project_popup.rs
 new file mode 100644
 index 0000000..326390c
@@ -3340,54 +4813,67 @@ index 0000000..326390c
 +    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-index 7f2028f..7338058 100644
+index 4fe2ed0..04cd482 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 +++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-@@ -297,6 +297,9 @@ impl ChatWidget {
+@@ -340,6 +340,9 @@ impl ChatWidget {
                  self.open_model_popup();
                  self.defer_input_until_settings_applied();
              }
 +            SlashCommand::Project => {
 +                self.open_meshagent_project_popup();
 +            }
-             SlashCommand::Personality => {
-                 self.open_personality_popup();
-                 self.defer_input_until_settings_applied();
-@@ -1169,6 +1172,7 @@ impl ChatWidget {
+             SlashCommand::Plan => {
+                 self.apply_plan_slash_command();
+             }
+@@ -1255,6 +1258,7 @@ impl ChatWidget {
              | SlashCommand::Compact
              | SlashCommand::Review
              | SlashCommand::Model
 +            | SlashCommand::Project
-             | SlashCommand::Personality
              | SlashCommand::Plan
              | SlashCommand::Goal
+             | SlashCommand::Side
 diff --git a/codex-rs/tui/src/chatwidget/tests/helpers.rs b/codex-rs/tui/src/chatwidget/tests/helpers.rs
-index c852995..2ba4adb 100644
+index 6565e1e..5eadc96 100644
 --- a/codex-rs/tui/src/chatwidget/tests/helpers.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/helpers.rs
-@@ -17,6 +17,9 @@ pub(super) async fn test_config() -> Config {
-             .expect("config");
+@@ -9,6 +9,11 @@ pub(super) async fn test_config() -> (tempfile::TempDir, Config) {
+         .prefix("chatwidget-tests-")
+         .tempdir()
+         .expect("tempdir");
++    std::fs::write(
++        codex_home.path().join("config.toml"),
++        "model_provider = \"openai\"\n",
++    )
++    .expect("fixture provider");
+     let mut config = Config::load_default_with_cli_overrides_for_codex_home(
+         codex_home.path().to_path_buf(),
+         Vec::new(),
+@@ -17,6 +22,10 @@ pub(super) async fn test_config() -> (tempfile::TempDir, Config) {
+     .expect("config");
      // Keep generic UI snapshots stable when the bundled catalog default changes.
      config.model = Some("gpt-5.6-sol".to_string());
++    config.model_provider_id = "openai".into();
 +    config.model_provider =
 +        codex_model_provider_info::built_in_model_providers(/*openai_base_url*/ None)["openai"]
 +            .clone();
-     config.codex_home = codex_home.abs();
-     config.sqlite = codex_state::SqliteConfig::new_for_testing(codex_home.as_path().abs());
-     config.log_dir = codex_home.join("log");
+     config.codex_home = codex_home.path().abs();
+     config.sqlite = codex_state::SqliteConfig::new_for_testing(codex_home.path().abs());
+     config.log_dir = codex_home.path().join("log");
 diff --git a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
-index f0cb0be..a9e3ca6 100644
+index 6b1a401..168ddce 100644
 --- a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
-@@ -12,6 +12,7 @@ use codex_app_server_protocol::PluginShareDiscoverability;
+@@ -12,6 +12,7 @@ use codex_app_server_protocol::PluginShareContext;
+ use codex_app_server_protocol::PluginShareDiscoverability;
  use codex_app_server_protocol::PluginSource;
  use codex_connectors::AppInfo;
- use codex_features::Stage;
 +use codex_login::meshagent::MeshAgentProject;
  use pretty_assertions::assert_eq;
  
  #[tokio::test]
-@@ -76,6 +77,44 @@ async fn plugins_popup_loading_state_snapshot() {
+@@ -77,6 +78,45 @@ async fn plugins_popup_loading_state_snapshot() {
      assert_chatwidget_snapshot!("plugins_popup_loading_state", popup);
  }
  
@@ -3416,27 +4902,56 @@ index f0cb0be..a9e3ca6 100644
 +    )));
 +
 +    let popup = render_bottom_popup(&chat, /*width*/ 80);
-+    insta::assert_snapshot!(popup, @r###"
++    insta::assert_snapshot!(popup, @"
 +      Select MeshAgent Project
 +      Applies to subsequent turns; an in-flight turn is unchanged.
 +
 +      Search projects
++
 +    › Project One            one · project-one
 +      Project Two (current)  two · project-two
 +      Project Three          project-three
 +
-+      Press enter to confirm or esc to go back
-+    "###);
++      enter select · esc back
++    ");
 +}
 +
  #[tokio::test]
  async fn marketplace_upgrade_loading_popup_snapshot() {
      let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+diff --git a/codex-rs/tui/src/config_update_tests.rs b/codex-rs/tui/src/config_update_tests.rs
+index 7f0f7c9..e139398 100644
+--- a/codex-rs/tui/src/config_update_tests.rs
++++ b/codex-rs/tui/src/config_update_tests.rs
+@@ -44,7 +44,7 @@ async fn remote_project_trust_guards_thread_start_and_preserves_repository_decis
+     std::fs::write(project_root.join(".git/HEAD"), "ref: refs/heads/main\n")?;
+     std::fs::create_dir(project_cwd.join(".codex"))?;
+     let undecided_config = format!(
+-        "[{}]\n",
++        "model_provider = \"openai\"\n[{}]\n",
+         trusted_project_edit(&project_root)
+             .key_path
+             .trim_end_matches(".trust_level")
+diff --git a/codex-rs/tui/src/dynamic_tools_tests.rs b/codex-rs/tui/src/dynamic_tools_tests.rs
+index d80c9e6..676af9e 100644
+--- a/codex-rs/tui/src/dynamic_tools_tests.rs
++++ b/codex-rs/tui/src/dynamic_tools_tests.rs
+@@ -14,6 +14,10 @@ async fn test_server(
+     tool_arguments: Value,
+ ) -> color_eyre::Result<(TempDir, AppServerSession, String, String)> {
+     let codex_home = tempfile::tempdir()?;
++    std::fs::write(
++        codex_home.path().join("config.toml"),
++        "model_provider = \"openai\"\n",
++    )?;
+     let config = ConfigBuilder::default()
+         .codex_home(codex_home.path().to_path_buf())
+         .build()
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index 58973a5..526a6e0 100644
+index 84c64d4..43915e7 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
-@@ -56,6 +56,7 @@ use codex_login::default_client::originator;
+@@ -59,6 +59,7 @@ use codex_login::default_client::originator;
  use codex_login::default_client::set_default_client_residency_requirement;
  use codex_login::enforce_login_restrictions;
  use codex_login::is_workload_identity_selected;
@@ -3444,7 +4959,7 @@ index 58973a5..526a6e0 100644
  use codex_protocol::ThreadId;
  use codex_protocol::auth::AuthMode;
  use codex_protocol::config_types::AltScreenMode;
-@@ -1123,6 +1124,20 @@ async fn run_ratatui_app(
+@@ -1264,6 +1265,20 @@ async fn run_ratatui_app(
      let startup_model_provider = initial_config.model_provider_id.clone();
      let (login_status, mut startup_account) = if workload_identity_selected {
          (LoginStatus::AuthMode(AuthMode::Chatgpt), None)
@@ -3462,19 +4977,42 @@ index 58973a5..526a6e0 100644
 +            },
 +            None,
 +        )
-     } else if initial_config.model_provider.requires_openai_auth {
+     } else {
          let Some(active_app_server) = app_server.as_mut() else {
              unreachable!("app server should exist when auth is required");
-@@ -1937,7 +1952,7 @@ fn should_show_onboarding(
- fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool {
-     // Only show the login screen for providers that actually require OpenAI auth
-     // (OpenAI or equivalents). For OSS/other providers, skip login entirely.
--    if !config.model_provider.requires_openai_auth {
-+    if !config.model_provider.requires_openai_auth && !config.model_provider.is_meshagent() {
-         return false;
+@@ -1284,9 +1299,10 @@ async fn run_ratatui_app(
+         }
+     };
+     // Workload identity bypasses interactive login; every other provider uses account/read.
+-    let requires_openai_auth = startup_account
+-        .as_ref()
+-        .is_some_and(|account| account.requires_openai_auth);
++    let requires_openai_auth = initial_config.model_provider.is_meshagent()
++        || startup_account
++            .as_ref()
++            .is_some_and(|account| account.requires_openai_auth);
+     let should_show_onboarding = should_show_onboarding(
+         login_status,
+         requires_openai_auth,
+@@ -2360,6 +2376,17 @@ pub(crate) mod tests {
      }
  
-@@ -2003,15 +2018,15 @@ mod tests {
+     async fn build_config(temp_dir: &TempDir) -> std::io::Result<Config> {
++        let path = temp_dir.path().join("config.toml");
++        let contents = if path.exists() {
++            std::fs::read_to_string(&path)?
++        } else {
++            String::new()
++        };
++        let parsed: codex_config::config_toml::ConfigToml =
++            toml::from_str(&contents).expect("fixture config");
++        if parsed.model_provider.is_none() {
++            std::fs::write(&path, format!("model_provider = \"openai\"\n{contents}"))?;
++        }
+         ConfigBuilder::default()
+             .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+             .codex_home(temp_dir.path().to_path_buf())
+@@ -2421,15 +2448,15 @@ requires_openai_auth = {requires_openai_auth}
                  false,
              ),
              (
@@ -3495,8 +5033,39 @@ index 58973a5..526a6e0 100644
                  LoginStatus::NotAuthenticated,
                  AppServerTarget::Embedded,
                  false,
+@@ -2694,7 +2721,7 @@ requires_openai_auth = {requires_openai_auth}
+             std::fs::create_dir_all(&explicit_cwd)?;
+             std::fs::write(
+                 codex_home.join("config.toml"),
+-                format!("[tui]\nresume_cwd = \"{configured_mode}\"\n"),
++                format!("model_provider = \"openai\"\n[tui]\nresume_cwd = \"{configured_mode}\"\n"),
+             )?;
+             let cwd_override = has_explicit_cwd.then_some(explicit_cwd.as_path());
+             let config = ConfigBuilder::default()
+@@ -3358,6 +3385,10 @@ requires_openai_auth = {requires_openai_auth}
+     #[tokio::test]
+     async fn fork_last_filters_latest_session_by_cwd_unless_show_all() -> color_eyre::Result<()> {
+         let temp_dir = TempDir::new()?;
++        std::fs::write(
++            temp_dir.path().join("config.toml"),
++            "model_provider = \"openai\"\n",
++        )?;
+         let project_cwd = temp_dir.path().join("project");
+         let linked_cwd = temp_dir.path().join("linked-project");
+         let other_cwd = temp_dir.path().join("other-project");
+@@ -3473,6 +3504,10 @@ requires_openai_auth = {requires_openai_auth}
+     async fn latest_session_lookup_falls_back_for_rollout_missing_from_state_db()
+     -> color_eyre::Result<()> {
+         let temp_dir = TempDir::new()?;
++        std::fs::write(
++            temp_dir.path().join("config.toml"),
++            "model_provider = \"openai\"\n",
++        )?;
+         let project_cwd = temp_dir.path().join("project");
+         std::fs::create_dir_all(&project_cwd)?;
+         let config = ConfigBuilder::default()
 diff --git a/codex-rs/tui/src/onboarding/auth.rs b/codex-rs/tui/src/onboarding/auth.rs
-index d242732..3cc9e92 100644
+index 29022d5..c3762cc 100644
 --- a/codex-rs/tui/src/onboarding/auth.rs
 +++ b/codex-rs/tui/src/onboarding/auth.rs
 @@ -16,6 +16,9 @@ use codex_app_server_protocol::ClientRequest;
@@ -3564,7 +5133,7 @@ index d242732..3cc9e92 100644
                  SignInState::ChatGptSuccessMessage => {
                      *self.sign_in_state.write().unwrap() = SignInState::ChatGptSuccess;
                  }
-@@ -261,6 +285,7 @@ pub(crate) struct AuthModeWidget {
+@@ -262,6 +286,7 @@ pub(crate) struct AuthModeWidget {
      pub bedrock_setup_enabled: bool,
      pub animations_enabled: bool,
      pub animations_suppressed: Cell<bool>,
@@ -3572,7 +5141,7 @@ index d242732..3cc9e92 100644
  }
  
  impl AuthModeWidget {
-@@ -271,13 +296,16 @@ impl AuthModeWidget {
+@@ -272,13 +297,16 @@ impl AuthModeWidget {
      pub(crate) fn should_suppress_animations(&self) -> bool {
          matches!(
              &*self.sign_in_state.read().unwrap(),
@@ -3590,7 +5159,7 @@ index d242732..3cc9e92 100644
              SignInState::ChatGptContinueInBrowser(state) => {
                  let request_handle = self.app_server_request_handle.clone();
                  let login_id = state.login_id.clone();
-@@ -349,6 +377,9 @@ impl AuthModeWidget {
+@@ -350,6 +378,9 @@ impl AuthModeWidget {
      }
  
      fn displayed_sign_in_options(&self) -> Vec<SignInOption> {
@@ -3600,7 +5169,7 @@ index d242732..3cc9e92 100644
          let mut options = vec![SignInOption::ChatGpt];
          if self.is_chatgpt_login_allowed() {
              options.push(SignInOption::DeviceCode);
-@@ -363,6 +394,9 @@ impl AuthModeWidget {
+@@ -364,6 +395,9 @@ impl AuthModeWidget {
      }
  
      fn selectable_sign_in_options(&self) -> Vec<SignInOption> {
@@ -3610,7 +5179,7 @@ index d242732..3cc9e92 100644
          let mut options = Vec::new();
          if self.is_chatgpt_login_allowed() {
              options.push(SignInOption::ChatGpt);
-@@ -401,6 +435,7 @@ impl AuthModeWidget {
+@@ -402,6 +436,7 @@ impl AuthModeWidget {
  
      fn handle_sign_in_option(&mut self, option: SignInOption) {
          match option {
@@ -3618,7 +5187,7 @@ index d242732..3cc9e92 100644
              SignInOption::ChatGpt => {
                  if self.is_chatgpt_login_allowed() {
                      self.start_chatgpt_login();
-@@ -429,14 +464,23 @@ impl AuthModeWidget {
+@@ -430,14 +465,23 @@ impl AuthModeWidget {
      }
  
      fn disallow_api_login(&mut self) {
@@ -3644,7 +5213,7 @@ index d242732..3cc9e92 100644
              vec!["  Choose how you want to use Codex.".into(), "".into()]
          } else {
              vec![
-@@ -490,6 +534,14 @@ impl AuthModeWidget {
+@@ -491,6 +535,14 @@ impl AuthModeWidget {
  
          for (idx, option) in self.displayed_sign_in_options().into_iter().enumerate() {
              match option {
@@ -3659,7 +5228,7 @@ index d242732..3cc9e92 100644
                  SignInOption::ChatGpt => {
                      lines.extend(create_mode_item(
                          idx,
-@@ -608,6 +660,70 @@ impl AuthModeWidget {
+@@ -618,6 +670,70 @@ impl AuthModeWidget {
          }
      }
  
@@ -3728,9 +5297,9 @@ index d242732..3cc9e92 100644
 +    }
 +
      fn render_chatgpt_success_message(&self, area: Rect, buf: &mut Buffer) {
-         let mut docs_line = HyperlinkLine::new(Line::from("  For more details see the ").dim());
-         docs_line.push_span(
-@@ -980,6 +1096,94 @@ impl AuthModeWidget {
+         let mut docs_line =
+             HyperlinkLine::new(Line::from("  Learn about permissions and approvals in the ").dim());
+@@ -992,6 +1108,94 @@ impl AuthModeWidget {
          headless_chatgpt_login::start_headless_chatgpt_login(self);
      }
  
@@ -3825,7 +5394,7 @@ index d242732..3cc9e92 100644
      pub(crate) fn on_account_login_completed(
          &mut self,
          notification: AccountLoginCompletedNotification,
-@@ -1034,12 +1238,15 @@ impl StepStateProvider for AuthModeWidget {
+@@ -1046,12 +1250,15 @@ impl StepStateProvider for AuthModeWidget {
          let sign_in_state = self.sign_in_state.read().unwrap();
          match &*sign_in_state {
              SignInState::PickMode
@@ -3842,7 +5411,7 @@ index d242732..3cc9e92 100644
              | SignInState::ApiKeyConfigured
              | SignInState::BedrockConfigured => StepState::Complete,
          }
-@@ -1053,6 +1260,15 @@ impl WidgetRef for AuthModeWidget {
+@@ -1065,6 +1272,15 @@ impl WidgetRef for AuthModeWidget {
              SignInState::PickMode => {
                  self.render_pick_mode(area, buf);
              }
@@ -3855,10 +5424,10 @@ index d242732..3cc9e92 100644
 +            SignInState::MeshAgentSuccess => {
 +                self.render_meshagent_success(area, buf);
 +            }
-             SignInState::ChatGptContinueInBrowser(_) => {
-                 self.render_continue_in_browser(area, buf);
+             SignInState::ChatGptContinueInBrowser(state) => {
+                 self.render_continue_in_browser(area, buf, state);
              }
-@@ -1174,6 +1390,7 @@ mod tests {
+@@ -1273,6 +1489,7 @@ mod tests {
              bedrock_setup_enabled: false,
              animations_enabled: true,
              animations_suppressed: std::cell::Cell::new(false),
@@ -3866,7 +5435,7 @@ index d242732..3cc9e92 100644
          };
          (widget, codex_home)
      }
-@@ -1258,6 +1475,42 @@ mod tests {
+@@ -1357,6 +1574,42 @@ mod tests {
          );
      }
  
@@ -3909,7 +5478,7 @@ index d242732..3cc9e92 100644
      #[tokio::test]
      async fn saving_api_key_is_blocked_when_chatgpt_forced() {
          let (mut widget, _tmp) = widget_forced_chatgpt().await;
-@@ -1502,6 +1755,43 @@ mod tests {
+@@ -1600,6 +1853,43 @@ mod tests {
          ));
      }
  
@@ -3954,10 +5523,10 @@ index d242732..3cc9e92 100644
      fn mark_url_hyperlink_wraps_cyan_underlined_cells() {
          let url = "https://example.com";
 diff --git a/codex-rs/tui/src/onboarding/onboarding_screen.rs b/codex-rs/tui/src/onboarding/onboarding_screen.rs
-index 39e06b8..a10a0d6 100644
+index 0ec1006..58ec8f5 100644
 --- a/codex-rs/tui/src/onboarding/onboarding_screen.rs
 +++ b/codex-rs/tui/src/onboarding/onboarding_screen.rs
-@@ -127,6 +127,7 @@ impl OnboardingScreen {
+@@ -138,6 +138,7 @@ impl OnboardingScreen {
              .as_ref()
              .map(|project| project.trust_target.to_string_lossy().into_owned());
          let auth_config = config.auth_config();
@@ -3965,9 +5534,9 @@ index 39e06b8..a10a0d6 100644
          let mut steps: Vec<Step> = Vec::new();
          steps.push(Step::Welcome(WelcomeWidget::new(
              !matches!(login_status, LoginStatus::NotAuthenticated),
-@@ -134,12 +135,13 @@ impl OnboardingScreen {
-             config.animations,
-         )));
+@@ -161,12 +162,13 @@ impl OnboardingScreen {
+         #[cfg(not(target_os = "windows"))]
+         let show_windows_create_sandbox_hint = false;
          if show_login_screen {
 -            let highlighted_mode =
 -                if auth_config.is_login_method_allowed(ForcedLoginMethod::Chatgpt) {
@@ -3985,16 +5554,31 @@ index 39e06b8..a10a0d6 100644
              if let Some(app_server_request_handle) = app_server_request_handle {
                  steps.push(Step::Auth(AuthModeWidget {
                      request_frame: tui.frame_requester(),
-@@ -152,6 +154,7 @@ impl OnboardingScreen {
-                     bedrock_setup_enabled,
-                     animations_enabled: config.animations,
+@@ -181,6 +183,7 @@ impl OnboardingScreen {
+                     animations_enabled: local_settings.tui.animations
+                         && local_settings.tui.effects.shimmer,
                      animations_suppressed: std::cell::Cell::new(false),
 +                    meshagent_login,
                  }));
              } else {
                  tracing::warn!("skipping onboarding login step without app-server request handle");
+diff --git a/codex-rs/tui/src/session_start_tests.rs b/codex-rs/tui/src/session_start_tests.rs
+index 42666f5..95c72e9 100644
+--- a/codex-rs/tui/src/session_start_tests.rs
++++ b/codex-rs/tui/src/session_start_tests.rs
+@@ -44,6 +44,10 @@ async fn archived_session_requires_confirmation_before_resume_or_fork() -> Resul
+         SessionStartAction::Fork(crate::app_server_session::ForkPermissionMode::InheritSaved),
+     ] {
+         let codex_home = TempDir::new()?;
++        std::fs::write(
++            codex_home.path().join("config.toml"),
++            "model_provider = \"openai\"\n",
++        )?;
+         let config = ConfigBuilder::default()
+             .codex_home(codex_home.path().to_path_buf())
+             .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
 diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
-index aab133f..2f1083b 100644
+index 301de2e..434396d 100644
 --- a/codex-rs/tui/src/slash_command.rs
 +++ b/codex-rs/tui/src/slash_command.rs
 @@ -13,6 +13,7 @@ pub enum SlashCommand {
@@ -4005,7 +5589,7 @@ index aab133f..2f1083b 100644
      Ide,
      Permissions,
      Keymap,
-@@ -123,6 +124,7 @@ impl SlashCommand {
+@@ -129,6 +130,7 @@ impl SlashCommand {
              SlashCommand::MemoryDrop => "DO NOT USE",
              SlashCommand::MemoryUpdate => "DO NOT USE",
              SlashCommand::Model => "choose what model and reasoning effort to use",
@@ -4013,7 +5597,7 @@ index aab133f..2f1083b 100644
              SlashCommand::Ide => {
                  "include current selection, open files, and other context from your IDE"
              }
-@@ -222,6 +224,7 @@ impl SlashCommand {
+@@ -255,6 +257,7 @@ impl SlashCommand {
              | SlashCommand::Memories
              | SlashCommand::Import
              | SlashCommand::Review
@@ -4021,7 +5605,7 @@ index aab133f..2f1083b 100644
              | SlashCommand::Plan
              | SlashCommand::Cd
              | SlashCommand::Clear
-@@ -318,6 +321,13 @@ mod tests {
+@@ -353,6 +356,13 @@ mod tests {
          assert!(SlashCommand::Raw.available_in_side_conversation());
          assert!(SlashCommand::Raw.supports_inline_args());
          assert!(SlashCommand::App.available_during_task());
@@ -4036,10 +5620,10 @@ index aab133f..2f1083b 100644
  
      #[test]
 diff --git a/codex-rs/tui/src/status/tests.rs b/codex-rs/tui/src/status/tests.rs
-index 1515fb8..d8f3fe1 100644
+index d2016ca..6d880f9 100644
 --- a/codex-rs/tui/src/status/tests.rs
 +++ b/codex-rs/tui/src/status/tests.rs
-@@ -133,6 +133,10 @@ fn app_server_workspace_write_profile(network_enabled: bool) -> PermissionProfil
+@@ -135,6 +135,10 @@ fn app_server_workspace_write_profile(network_enabled: bool) -> PermissionProfil
  async fn test_config(temp_home: &TempDir) -> Config {
      let mut config = ConfigBuilder::default()
          .codex_home(temp_home.path().to_path_buf())
@@ -4050,15 +5634,87 @@ index 1515fb8..d8f3fe1 100644
          .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
          .build()
          .await
-@@ -356,6 +360,11 @@ async fn status_snapshot_includes_reasoning_details() {
- #[tokio::test]
- async fn status_snapshot_shows_chatgpt_plan_without_email() {
-     let temp_home = TempDir::new().expect("temp home");
-+    std::fs::write(
-+        temp_home.path().join("config.toml"),
-+        "model_provider = \"openai\"\n",
-+    )
-+    .expect("write OpenAI provider config");
-     write_models_cache(temp_home.path()).expect("write models cache");
+@@ -364,7 +368,10 @@ async fn status_snapshot_shows_chatgpt_plan_without_email() {
+         .await;
+     std::fs::write(
+         &profile_path,
+-        format!("chatgpt_base_url = '{}'", server.uri()),
++        format!(
++            "model_provider = \"openai\"\nchatgpt_base_url = '{}'",
++            server.uri()
++        ),
+     )
+     .expect("configure local ChatGPT fixture");
      let mut config = test_config(&temp_home).await;
-     config.model = Some("gpt-5.1-codex-max".to_string());
+diff --git a/codex-rs/tui/src/updates.rs b/codex-rs/tui/src/updates.rs
+index 9bbdf31..1a54788 100644
+--- a/codex-rs/tui/src/updates.rs
++++ b/codex-rs/tui/src/updates.rs
+@@ -22,10 +22,15 @@ use std::path::Path;
+ 
+ use crate::version::CODEX_CLI_VERSION;
+ 
++const DISTRIBUTION_UPDATES_ENABLED: bool = false;
++
+ pub(crate) use crate::updates_cache::dismiss_version;
+ 
+ pub fn get_upgrade_version(config: &Config) -> Option<String> {
+-    if !config.check_for_update_on_startup || is_source_build_version(CODEX_CLI_VERSION) {
++    if !DISTRIBUTION_UPDATES_ENABLED
++        || !config.check_for_update_on_startup
++        || is_source_build_version(CODEX_CLI_VERSION)
++    {
+         return None;
+     }
+ 
+@@ -150,7 +155,10 @@ async fn fetch_latest_github_release_version(
+ /// Returns the latest version to show in a popup, if it should be shown.
+ /// This respects the user's dismissal choice for the current latest version.
+ pub fn get_upgrade_version_for_popup(config: &Config) -> Option<String> {
+-    if !config.check_for_update_on_startup || is_source_build_version(CODEX_CLI_VERSION) {
++    if !DISTRIBUTION_UPDATES_ENABLED
++        || !config.check_for_update_on_startup
++        || is_source_build_version(CODEX_CLI_VERSION)
++    {
+         return None;
+     }
+ 
+diff --git a/codex-rs/tui/tests/suite/external_editor_tests.rs b/codex-rs/tui/tests/suite/external_editor_tests.rs
+index 8b58e62..dc13d05 100644
+--- a/codex-rs/tui/tests/suite/external_editor_tests.rs
++++ b/codex-rs/tui/tests/suite/external_editor_tests.rs
+@@ -69,7 +69,7 @@ fn external_editors_keep_the_screen_and_return_the_draft() -> Result<()> {
+             terminal.wait_for_screen("Save and close external editor to continue.")?;
+             ensure!(terminal.screen_contains("initial draft"));
+             if fullscreen {
+-                ensure!(terminal.screen_contains("OpenAI Codex"));
++                ensure!(terminal.screen_contains("MeshAgent Codex"));
+                 ensure!(terminal.screen_contains("GPT-5.6-Terra"));
+             }
+             ensure!(
+diff --git a/codex-rs/tui/tests/suite/provider_defaults.rs b/codex-rs/tui/tests/suite/provider_defaults.rs
+index 3ae9c85..d787a82 100644
+--- a/codex-rs/tui/tests/suite/provider_defaults.rs
++++ b/codex-rs/tui/tests/suite/provider_defaults.rs
+@@ -52,7 +52,7 @@ async fn history_lookup_uses_server_provider_with_local_and_embedded_servers() -
+                     "-c",
+                     "model_provider=\"server-provider\"",
+                 ])
+-                .env("CODEX_HOME", home.path())
++                .env("MESHAGENT_CODEX_HOME", home.path())
+                 .stdin(Stdio::null())
+                 .stdout(Stdio::null())
+                 .stderr(Stdio::inherit())
+diff --git a/codex-rs/tui/tests/suite/snapshots/all__suite__focus_palette__daemon_auto_start_failure.snap b/codex-rs/tui/tests/suite/snapshots/all__suite__focus_palette__daemon_auto_start_failure.snap
+index 0d40a84..360d1ff 100644
+--- a/codex-rs/tui/tests/suite/snapshots/all__suite__focus_palette__daemon_auto_start_failure.snap
++++ b/codex-rs/tui/tests/suite/snapshots/all__suite__focus_palette__daemon_auto_start_failure.snap
+@@ -1,7 +1,6 @@
+ ---
+ source: tui/tests/suite/focus_palette.rs
+-assertion_line: 484
+ expression: failure.trim()
+ ---
+-Error: daemon executable not found at [CODEX_HOME]/packages/app-server-daemon/current/bin/codex; repair the existing installation, or run `codex app-server daemon start` to install a missing daemon
++Error: managed MeshAgent Codex install not found at [CODEX_HOME]/packages/standalone/current/codex; install it with the MeshAgent Codex distribution helper, then rerun the command
+ To work without the background server, rerun the same command with --no-daemon (including resume or fork and its arguments).

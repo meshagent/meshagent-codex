@@ -205,12 +205,41 @@ install_managed_binary() {
   printf '%s\n' "$destination"
 }
 
-run_tests() {
-  local source
+run_tests() (
+  local source test_root test_user_home test_codex_home cargo_home rustup_home
   source="$(ensure_materialized)"
   require_command just
   require_command cargo-nextest
-  (cd "$source" && env -u NO_COLOR TERM=xterm-256color just test "$@")
+  cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+  rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
+  umask 077
+  test_root="$(mktemp -d "$temporary_root/meshagent-codex-tests.XXXXXX")"
+  trap 'rm -rf -- "$test_root"' EXIT
+  test_user_home="$test_root/user"
+  test_codex_home="$test_root/codex"
+  mkdir -p "$test_user_home" "$test_codex_home"
+  if [[ "${OS:-}" == Windows_NT ]]; then
+    require_command cygpath
+    test_user_home="$(cygpath -w "$test_user_home")"
+    test_codex_home="$(cygpath -w "$test_codex_home")"
+    cargo_home="$(cygpath -w "$cargo_home")"
+    rustup_home="$(cygpath -w "$rustup_home")"
+  fi
+  # Logout tests must never modify the developer's shared MeshAgent account settings.
+  (cd "$source" && env -u NO_COLOR -u MESHAGENT_API_URL -u OPENAI_API_KEY -u CODEX_API_KEY \
+    HOME="$test_user_home" USERPROFILE="$test_user_home" \
+    MESHAGENT_CODEX_HOME="$test_codex_home" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" \
+    TERM=xterm-256color just test "$@")
+)
+
+test_patched_packages() {
+  run_tests \
+    -p codex-utils-home-dir -p codex-utils-cli -p codex-app-server-transport \
+    -p codex-app-server-daemon -p codex-login -p codex-model-provider-info \
+    -p codex-model-provider -p codex-models-manager -p codex-core -p codex-cli -p codex-tui \
+    -p codex-windows-sandbox -p codex-test-binary-support \
+    -p core_test_support -p app_test_support \
+    -p codex-code-mode-host -p codex-rmcp-client
 }
 
 usage() {
@@ -273,8 +302,9 @@ case "$command_name" in
     run_in_source cargo check --locked \
       -p codex-utils-home-dir -p codex-utils-cli -p codex-app-server-transport \
       -p codex-app-server-daemon -p codex-login -p codex-model-provider-info \
-      -p codex-model-provider -p codex-core -p codex-cli -p codex-tui \
-      -p codex-windows-sandbox
+      -p codex-model-provider -p codex-models-manager -p codex-core -p codex-cli -p codex-tui \
+      -p codex-windows-sandbox -p codex-test-binary-support \
+      -p core_test_support -p app_test_support -p codex-rmcp-client
     ;;
   build)
     build_distribution "$@"
@@ -289,17 +319,7 @@ case "$command_name" in
     install_managed_binary "$host_binary" "${1:-}"
     ;;
   test-patched)
-    run_tests -p codex-utils-home-dir
-    run_tests -p codex-utils-cli
-    run_tests -p codex-app-server-transport
-    run_tests -p codex-app-server-daemon
-    run_tests -p codex-login
-    run_tests -p codex-model-provider-info
-    run_tests -p codex-model-provider
-    run_tests -p codex-core
-    run_tests -p codex-cli
-    run_tests -p codex-tui
-    run_tests -p codex-windows-sandbox
+    test_patched_packages
     ;;
   test)
     run_tests "$@"
@@ -312,19 +332,10 @@ case "$command_name" in
     run_in_source cargo check --locked \
       -p codex-utils-home-dir -p codex-utils-cli -p codex-app-server-transport \
       -p codex-app-server-daemon -p codex-login -p codex-model-provider-info \
-      -p codex-model-provider -p codex-core -p codex-cli -p codex-tui \
-      -p codex-windows-sandbox
-    run_tests -p codex-utils-home-dir
-    run_tests -p codex-utils-cli
-    run_tests -p codex-app-server-transport
-    run_tests -p codex-app-server-daemon
-    run_tests -p codex-login
-    run_tests -p codex-model-provider-info
-    run_tests -p codex-model-provider
-    run_tests -p codex-core
-    run_tests -p codex-cli
-    run_tests -p codex-tui
-    run_tests -p codex-windows-sandbox
+      -p codex-model-provider -p codex-models-manager -p codex-core -p codex-cli -p codex-tui \
+      -p codex-windows-sandbox -p codex-test-binary-support \
+      -p core_test_support -p app_test_support -p codex-rmcp-client
+    test_patched_packages
     binary="$(build_distribution)"
     "$binary" --version | grep -Fx "codex-cli $distribution_version" >/dev/null
     "$binary" --help | grep -F "MeshAgent Codex is maintained by MeshAgent" >/dev/null

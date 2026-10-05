@@ -1,1097 +1,1189 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: MeshAgent <engineering@meshagent.com>
-Date: Wed, 2 Sep 2026 10:24:44 -0700
+Date: Mon, 5 Oct 2026 10:32:11 -0700
 Subject: [PATCH] Brand MeshAgent Codex distribution
 
 ---
- codex-rs/Cargo.lock                           | 298 +++++++++---------
+ codex-rs/Cargo.lock                           | 318 +++++++++---------
  codex-rs/Cargo.toml                           |   2 +-
  codex-rs/cli/src/bin/logs_client.rs           |   2 +-
  codex-rs/cli/src/main.rs                      |  11 +-
+ ..._server_help_documents_remote_options.snap |   6 +-
  codex-rs/cli/tests/sandbox_cloud_config.rs    |   2 +-
- .../app/tests/session_lifecycle_requests.rs   |   4 +-
- .../tui/src/chatwidget/rendering_tests.rs     |  12 +-
- codex-rs/tui/src/history_cell/session.rs      |  10 +-
- ...pdate_available_history_cell_snapshot.snap |  15 +-
+ ..._animation_tests__fresh_thread_header.snap |   4 +-
+ ...s_previous_transcript_before_replay-2.snap |   3 +-
+ .../app/tests/session_lifecycle_requests.rs   |  11 +-
+ ...e_reconnect__unavailable_conversation.snap |   2 +-
+ ...e_buffered_replay_reconciles_captions.snap |   3 +-
+ ...__voice_completed_after_thread_switch.snap |   3 +-
+ ...partial_completed_after_thread_switch.snap |   3 +-
+ ...e_replay_reconciles_matching_captions.snap |   3 +-
+ ...rame_tests__startup_tip_in_transcript.snap |   5 +-
+ ...p__tests__command_popup_default_items.snap |   1 +
+ .../tui/src/chatwidget/rendering_tests.rs     |   2 +-
+ ...__catalog_model_session_header_resume.snap |   3 +-
+ ..._catalog_model_session_header_startup.snap |   3 +-
+ ...og_model_session_header_unknown_model.snap |   2 +-
+ ...ests__slash_copy_picker_status_fields.snap |   2 +-
+ ...idget__tests__slash_copy_whole_status.snap |   2 +-
+ codex-rs/tui/src/history_cell/session.rs      |   8 +-
+ ...pdate_available_history_cell_snapshot.snap |  14 +-
  ...session_header_clamps_to_narrow_width.snap |   3 +-
- ...s__session_header_halfwidth_directory.snap |   5 +-
- ..._session_header_halfwidth_sound_marks.snap |   5 +-
- ...s__session_header_indicates_yolo_mode.snap |   5 +-
- ...nfo_availability_nux_tooltip_snapshot.snap |  15 +-
- ...pdate_available_history_cell_snapshot.snap |   3 +-
- ...pdate_available_history_cell_snapshot.snap |   3 +-
+ ...s__session_header_halfwidth_directory.snap |   7 +-
+ ...s__session_header_indicates_yolo_mode.snap |   3 +-
+ ...nfo_availability_nux_tooltip_snapshot.snap |   3 +-
+ ...pdate_available_history_cell_snapshot.snap |   2 +-
+ ...pdate_available_history_cell_snapshot.snap |   2 +-
  ...pdate_available_history_cell_snapshot.snap |  14 +-
  codex-rs/tui/src/keymap.rs                    |   8 +-
  codex-rs/tui/src/keymap/conflict_tests.rs     |   2 +-
- ...ter_long_transcript_fresh_header_only.snap |   5 +-
- ...eader_fast_status_fast_capable_models.snap |   5 +-
- ...artup_draft_fresh_session_transitions.snap |  73 ++---
- ...aft__tests__startup_draft_full_frames.snap |  51 +--
- ...__startup_draft_onboarding_transition.snap |  13 +-
- codex-rs/tui/src/status/card.rs               |   2 +-
- ...ched_limits_hide_credits_without_flag.snap |   3 +-
- ..._snapshot_includes_credits_and_limits.snap |   3 +-
- ...ludes_enterprise_monthly_credit_limit.snap |   3 +-
- ..._status_snapshot_includes_forked_from.snap |   3 +-
- ...tatus_snapshot_includes_monthly_limit.snap |   3 +-
- ...s_snapshot_includes_reasoning_details.snap |   3 +-
- ...hot_shows_active_user_defined_profile.snap |   3 +-
- ...napshot_shows_auto_review_permissions.snap |   3 +-
- ...shot_shows_chatgpt_plan_without_email.snap |   3 +-
- ...snapshot_shows_missing_limits_message.snap |   3 +-
- ...apshot_shows_refreshing_limits_notice.snap |   3 +-
- ...s_snapshot_shows_stale_limits_message.snap |   3 +-
- ...shot_shows_unavailable_limits_message.snap |   3 +-
- ...efreshing_empty_limits_as_unavailable.snap |   3 +-
+ ...ter_long_transcript_fresh_header_only.snap |   3 +-
+ ...__layout__tests__owned_startup_layout.snap |   2 +-
+ ...artup_draft_fresh_session_transitions.snap |  13 +-
+ ...aft__tests__startup_draft_full_frames.snap |  11 +-
+ ...__startup_draft_onboarding_transition.snap |   3 +-
+ ...raft__tests__terminal_app_ssh_startup.snap |   5 +-
+ ...__tests__update_picker_selected_28x12.snap |   6 +-
+ ...te_prompt__tests__update_prompt_modal.snap |   2 +-
+ ...ests__status_server_auth_not_required.snap |   2 +-
+ ...s__tests__status_server_auth_required.snap |   2 +-
+ ...ched_limits_hide_credits_without_flag.snap |   2 +-
+ ..._snapshot_includes_credits_and_limits.snap |   2 +-
+ ...ludes_enterprise_monthly_credit_limit.snap |   2 +-
+ ..._status_snapshot_includes_forked_from.snap |   2 +-
+ ...tatus_snapshot_includes_monthly_limit.snap |   2 +-
+ ...s_snapshot_includes_reasoning_details.snap |   2 +-
+ ...atus_snapshot_local_background_server.snap |   2 +-
+ ..._tests__status_snapshot_remote_server.snap |   2 +-
+ ...hot_shows_active_user_defined_profile.snap |   2 +-
+ ...napshot_shows_auto_review_permissions.snap |   2 +-
+ ...shot_shows_chatgpt_plan_without_email.snap |   2 +-
+ ...snapshot_shows_missing_limits_message.snap |   2 +-
+ ...apshot_shows_refreshing_limits_notice.snap |   2 +-
+ ...s_snapshot_shows_stale_limits_message.snap |   2 +-
+ ...shot_shows_unavailable_limits_message.snap |   2 +-
+ ...efreshing_empty_limits_as_unavailable.snap |   2 +-
  ...tes_halfwidth_kana_in_narrow_terminal.snap |   3 +-
- ...snapshot_truncates_in_narrow_terminal.snap |   3 +-
- ...s_default_reasoning_when_config_empty.snap |   3 +-
- ..._limit_labels_for_unsupported_windows.snap |   3 +-
- ...hly_credit_details_in_narrow_terminal.snap |   3 +-
- ...ipt_overlay_status_rate_limit_refresh.snap |   5 +-
+ ...snapshot_truncates_in_narrow_terminal.snap |   2 +-
+ ...s_default_reasoning_when_config_empty.snap |   2 +-
+ ..._limit_labels_for_unsupported_windows.snap |   2 +-
+ ...hly_credit_details_in_narrow_terminal.snap |   2 +-
+ ...ipt_overlay_status_rate_limit_refresh.snap |   4 +-
  codex-rs/tui/src/version.rs                   |   3 +
  codex-rs/tui/tests/suite/focus_palette.rs     |   2 +-
  codex-rs/utils/cli/src/config_override.rs     |   2 +-
  codex-rs/utils/home-dir/src/lib.rs            |   8 +-
- 49 files changed, 343 insertions(+), 302 deletions(-)
+ 69 files changed, 283 insertions(+), 287 deletions(-)
 
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index e217b70..186c8ea 100644
+index 19885ae..cfbe42d 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -394,7 +394,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
+@@ -268,7 +268,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
  
  [[package]]
  name = "app_test_support"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -1897,7 +1897,7 @@ dependencies = [
+@@ -1893,7 +1893,7 @@ dependencies = [
  
  [[package]]
  name = "codex-agent-extension"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-core",
-@@ -1909,7 +1909,7 @@ dependencies = [
+@@ -1905,7 +1905,7 @@ dependencies = [
  
  [[package]]
  name = "codex-agent-graph-store"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-protocol",
   "codex-state",
-@@ -1924,7 +1924,7 @@ dependencies = [
+@@ -1920,7 +1920,7 @@ dependencies = [
  
  [[package]]
  name = "codex-agent-identity"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -1944,7 +1944,7 @@ dependencies = [
+@@ -1940,7 +1940,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-agent-message-board-client"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "anyhow",
+  "chrono",
+@@ -1960,7 +1960,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-agent-message-board-extension"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "base64 0.22.1",
+  "caseless",
+@@ -1983,7 +1983,7 @@ dependencies = [
  
  [[package]]
  name = "codex-agent-roles"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-config",
   "codex-file-system",
-@@ -1957,7 +1957,7 @@ dependencies = [
+@@ -1996,7 +1996,7 @@ dependencies = [
  
  [[package]]
  name = "codex-analytics"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-app-server-protocol",
   "codex-git-utils",
-@@ -1978,7 +1978,7 @@ dependencies = [
+@@ -2018,7 +2018,7 @@ dependencies = [
  
  [[package]]
  name = "codex-ansi-escape"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "ansi-to-tui",
   "ratatui",
-@@ -1987,7 +1987,7 @@ dependencies = [
+@@ -2027,7 +2027,7 @@ dependencies = [
  
  [[package]]
  name = "codex-api"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "assert_matches",
-@@ -2022,7 +2022,7 @@ dependencies = [
+@@ -2065,7 +2065,7 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "app_test_support",
-@@ -2124,7 +2124,7 @@ dependencies = [
+@@ -2177,7 +2177,7 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server-client"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-app-server",
   "codex-app-server-protocol",
-@@ -2151,7 +2151,7 @@ dependencies = [
+@@ -2204,7 +2204,7 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server-daemon"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
-  "codex-app-server-protocol",
-@@ -2172,7 +2172,7 @@ dependencies = [
+  "blake3",
+@@ -2229,7 +2229,7 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server-protocol"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-app-server-protocol-noop-macros",
-@@ -2206,11 +2206,11 @@ dependencies = [
+@@ -2263,11 +2263,11 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server-protocol-noop-macros"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  
  [[package]]
  name = "codex-app-server-test-client"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "clap",
-@@ -2232,7 +2232,7 @@ dependencies = [
+@@ -2289,7 +2289,7 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server-transport"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
-  "anyhow",
   "axum",
-@@ -2274,7 +2274,7 @@ dependencies = [
+  "base64 0.22.1",
+@@ -2331,7 +2331,7 @@ dependencies = [
  
  [[package]]
  name = "codex-apply-patch"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "assert_cmd",
-@@ -2294,7 +2294,7 @@ dependencies = [
+@@ -2351,7 +2351,7 @@ dependencies = [
  
  [[package]]
  name = "codex-arg0"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-apply-patch",
-@@ -2316,7 +2316,7 @@ dependencies = [
+@@ -2374,7 +2374,7 @@ dependencies = [
  
  [[package]]
  name = "codex-async-utils"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "pretty_assertions",
-  "tokio",
-@@ -2325,7 +2325,7 @@ dependencies = [
+  "rand 0.9.3",
+@@ -2384,7 +2384,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-attachment-store"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "pretty_assertions",
+  "serde",
+@@ -2394,7 +2394,7 @@ dependencies = [
  
  [[package]]
  name = "codex-aws-auth"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "aws-config",
   "aws-credential-types",
-@@ -2340,7 +2340,7 @@ dependencies = [
+@@ -2420,7 +2420,7 @@ dependencies = [
  
  [[package]]
  name = "codex-backend-client"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-api",
-@@ -2360,7 +2360,7 @@ dependencies = [
+@@ -2440,7 +2440,7 @@ dependencies = [
  
  [[package]]
  name = "codex-backend-openapi-models"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "serde",
   "serde_json",
-@@ -2369,7 +2369,7 @@ dependencies = [
+@@ -2449,7 +2449,7 @@ dependencies = [
  
  [[package]]
  name = "codex-build-info"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-install-context",
   "pretty_assertions",
-@@ -2381,7 +2381,7 @@ dependencies = [
+@@ -2462,7 +2462,7 @@ dependencies = [
  
  [[package]]
  name = "codex-bwrap"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "cc",
   "libc",
-@@ -2390,7 +2390,7 @@ dependencies = [
+@@ -2471,7 +2471,7 @@ dependencies = [
  
  [[package]]
  name = "codex-chatgpt"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "clap",
-@@ -2412,7 +2412,7 @@ dependencies = [
+@@ -2493,7 +2493,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cli"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "app_test_support",
-@@ -2502,7 +2502,7 @@ dependencies = [
+@@ -2594,7 +2594,7 @@ dependencies = [
  
  [[package]]
  name = "codex-client"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-http-client",
   "eventsource-stream",
-@@ -2515,7 +2515,7 @@ dependencies = [
+@@ -2608,7 +2608,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cloud-config"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "base64 0.22.1",
   "chrono",
-@@ -2540,7 +2540,7 @@ dependencies = [
+@@ -2634,7 +2634,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cloud-tasks"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -2573,7 +2573,7 @@ dependencies = [
+@@ -2667,7 +2667,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cloud-tasks-client"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -2588,7 +2588,7 @@ dependencies = [
+@@ -2682,7 +2682,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cloud-tasks-mock-client"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "chrono",
   "codex-cloud-tasks-client",
-@@ -2597,7 +2597,7 @@ dependencies = [
+@@ -2691,7 +2691,7 @@ dependencies = [
  
  [[package]]
  name = "codex-code-mode"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-code-mode-protocol",
   "codex-http-client",
-@@ -2620,7 +2620,7 @@ dependencies = [
+@@ -2714,7 +2714,7 @@ dependencies = [
  
  [[package]]
  name = "codex-code-mode-host"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "axum",
-@@ -2648,7 +2648,7 @@ dependencies = [
+@@ -2743,7 +2743,7 @@ dependencies = [
  
  [[package]]
  name = "codex-code-mode-protocol"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-protocol",
   "glob",
-@@ -2666,7 +2666,7 @@ dependencies = [
+@@ -2761,7 +2761,7 @@ dependencies = [
  
  [[package]]
  name = "codex-code-mode-runtime"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "base64 0.22.1",
   "codex-code-mode-protocol",
-@@ -2684,11 +2684,11 @@ dependencies = [
+@@ -2779,11 +2779,11 @@ dependencies = [
  
  [[package]]
  name = "codex-collaboration-mode-templates"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  
  [[package]]
  name = "codex-config"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -2737,7 +2737,7 @@ dependencies = [
+@@ -2833,7 +2833,7 @@ dependencies = [
  
  [[package]]
  name = "codex-config-schema"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "clap",
-@@ -2746,7 +2746,7 @@ dependencies = [
+@@ -2842,7 +2842,7 @@ dependencies = [
  
  [[package]]
  name = "codex-connectors"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "arc-swap",
-@@ -2768,7 +2768,7 @@ dependencies = [
+@@ -2864,7 +2864,7 @@ dependencies = [
  
  [[package]]
  name = "codex-connectors-extension"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-connectors",
   "codex-core-plugins",
-@@ -2782,7 +2782,7 @@ dependencies = [
+@@ -2878,7 +2878,7 @@ dependencies = [
  
  [[package]]
  name = "codex-context-fragments"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-protocol",
   "codex-utils-string",
-@@ -2790,7 +2790,7 @@ dependencies = [
+@@ -2888,7 +2888,7 @@ dependencies = [
  
  [[package]]
  name = "codex-core"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "arc-swap",
-@@ -2924,7 +2924,7 @@ dependencies = [
+@@ -3026,7 +3026,7 @@ dependencies = [
  
  [[package]]
  name = "codex-core-api"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-analytics",
   "codex-app-server-protocol",
-@@ -2947,7 +2947,7 @@ dependencies = [
+@@ -3049,7 +3049,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-core-plugin-common"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "codex-utils-absolute-path",
+  "semver",
+@@ -3060,7 +3060,7 @@ dependencies = [
  
  [[package]]
  name = "codex-core-plugins"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -3003,7 +3003,7 @@ dependencies = [
+@@ -3116,7 +3116,7 @@ dependencies = [
  
  [[package]]
  name = "codex-diagnostics"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "libc",
   "pretty_assertions",
-@@ -3011,7 +3011,7 @@ dependencies = [
+@@ -3124,7 +3124,7 @@ dependencies = [
  
  [[package]]
  name = "codex-exec"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "assert_cmd",
-@@ -3060,7 +3060,7 @@ dependencies = [
+@@ -3176,7 +3176,7 @@ dependencies = [
  
  [[package]]
  name = "codex-exec-server"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "arc-swap",
-@@ -3119,7 +3119,7 @@ dependencies = [
+@@ -3244,7 +3244,7 @@ dependencies = [
  
  [[package]]
  name = "codex-exec-server-protocol"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "base64 0.22.1",
   "codex-file-system",
-@@ -3134,7 +3134,7 @@ dependencies = [
+@@ -3260,7 +3260,7 @@ dependencies = [
  
  [[package]]
  name = "codex-exec-server-test-support"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-exec-server",
-@@ -3149,7 +3149,7 @@ dependencies = [
+@@ -3275,7 +3275,7 @@ dependencies = [
  
  [[package]]
  name = "codex-execpolicy"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "clap",
-@@ -3167,7 +3167,7 @@ dependencies = [
+@@ -3293,7 +3293,7 @@ dependencies = [
  
  [[package]]
  name = "codex-experimental-api-macros"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "proc-macro2",
   "quote",
-@@ -3176,7 +3176,7 @@ dependencies = [
+@@ -3302,7 +3302,7 @@ dependencies = [
  
  [[package]]
  name = "codex-extension-api"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
+  "codex-api",
   "codex-config",
-  "codex-context-fragments",
-@@ -3193,7 +3193,7 @@ dependencies = [
+@@ -3324,7 +3324,7 @@ dependencies = [
  
  [[package]]
  name = "codex-extension-items"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-utils-absolute-path",
   "pretty_assertions",
-@@ -3205,7 +3205,7 @@ dependencies = [
+@@ -3336,7 +3336,7 @@ dependencies = [
  
  [[package]]
  name = "codex-external-agent-migration"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "chrono",
   "codex-analytics",
-@@ -3235,7 +3235,7 @@ dependencies = [
+@@ -3366,7 +3366,7 @@ dependencies = [
  
  [[package]]
  name = "codex-features"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
-  "codex-otel",
+  "codex-network-proxy",
   "codex-protocol",
-@@ -3248,7 +3248,7 @@ dependencies = [
+@@ -3379,7 +3379,7 @@ dependencies = [
  
  [[package]]
  name = "codex-feedback"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "bytes",
-@@ -3270,7 +3270,7 @@ dependencies = [
+@@ -3404,7 +3404,7 @@ dependencies = [
  
  [[package]]
  name = "codex-file-search"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "clap",
-@@ -3286,7 +3286,7 @@ dependencies = [
+@@ -3420,7 +3420,7 @@ dependencies = [
  
  [[package]]
  name = "codex-file-system"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "bytes",
   "codex-protocol",
-@@ -3298,7 +3298,7 @@ dependencies = [
+@@ -3432,7 +3432,7 @@ dependencies = [
  
  [[package]]
  name = "codex-file-watcher"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "notify",
   "pretty_assertions",
-@@ -3309,7 +3309,7 @@ dependencies = [
+@@ -3443,7 +3443,7 @@ dependencies = [
  
  [[package]]
  name = "codex-git-attribution"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-backend-client",
   "codex-extension-api",
-@@ -3322,7 +3322,7 @@ dependencies = [
+@@ -3456,7 +3456,7 @@ dependencies = [
  
  [[package]]
  name = "codex-git-utils"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -3348,7 +3348,7 @@ dependencies = [
+@@ -3483,7 +3483,7 @@ dependencies = [
  
  [[package]]
  name = "codex-goal-extension"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -3372,7 +3372,7 @@ dependencies = [
+@@ -3508,7 +3508,7 @@ dependencies = [
  
  [[package]]
  name = "codex-guardian-context"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
-  "codex-protocol",
-  "pretty_assertions",
-@@ -3381,7 +3381,7 @@ dependencies = [
+  "codex-context-fragments",
+  "codex-history",
+@@ -3519,7 +3519,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-guardian-reviewer"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "anyhow",
+  "codex-analytics",
+@@ -3544,7 +3544,7 @@ dependencies = [
  
  [[package]]
  name = "codex-guardian-v2"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-analytics",
-@@ -3411,7 +3411,7 @@ dependencies = [
+@@ -3580,7 +3580,7 @@ dependencies = [
  
  [[package]]
  name = "codex-history"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-protocol",
-@@ -3423,7 +3423,7 @@ dependencies = [
+@@ -3592,7 +3592,7 @@ dependencies = [
  
  [[package]]
  name = "codex-history-notes-extension"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
-  "codex-api",
+  "codex-analytics",
   "codex-client",
-@@ -3447,7 +3447,7 @@ dependencies = [
+@@ -3617,7 +3617,7 @@ dependencies = [
  
  [[package]]
  name = "codex-home"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-extension-api",
   "codex-utils-absolute-path",
-@@ -3458,7 +3458,7 @@ dependencies = [
+@@ -3629,7 +3629,7 @@ dependencies = [
  
  [[package]]
  name = "codex-hooks"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "async-channel",
-@@ -3484,7 +3484,7 @@ dependencies = [
+@@ -3657,7 +3657,7 @@ dependencies = [
  
  [[package]]
  name = "codex-http-client"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "bytes",
   "codex-utils-cargo-bin",
-@@ -3516,7 +3516,7 @@ dependencies = [
+@@ -3693,7 +3693,7 @@ dependencies = [
  
  [[package]]
  name = "codex-image-generation-extension"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "base64 0.22.1",
   "codex-api",
-@@ -3543,7 +3543,7 @@ dependencies = [
+@@ -3721,7 +3721,7 @@ dependencies = [
  
  [[package]]
  name = "codex-install-context"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-utils-absolute-path",
   "codex-utils-home-dir",
-@@ -3556,7 +3556,7 @@ dependencies = [
+@@ -3734,7 +3734,7 @@ dependencies = [
  
  [[package]]
  name = "codex-keyring-store"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "keyring",
-  "tracing",
-@@ -3564,7 +3564,7 @@ dependencies = [
+  "pretty_assertions",
+@@ -3745,7 +3745,7 @@ dependencies = [
  
  [[package]]
  name = "codex-linux-sandbox"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "clap",
   "codex-core",
-@@ -3591,7 +3591,7 @@ dependencies = [
+@@ -3773,7 +3773,7 @@ dependencies = [
  
  [[package]]
  name = "codex-lmstudio"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-core",
   "codex-http-client",
-@@ -3605,7 +3605,7 @@ dependencies = [
+@@ -3787,7 +3787,7 @@ dependencies = [
  
  [[package]]
  name = "codex-login"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -3648,7 +3648,7 @@ dependencies = [
+@@ -3831,7 +3831,7 @@ dependencies = [
  
  [[package]]
  name = "codex-mcp"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "arc-swap",
-@@ -3688,7 +3688,7 @@ dependencies = [
+@@ -3871,7 +3871,7 @@ dependencies = [
  
  [[package]]
  name = "codex-mcp-extension"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "axum",
-@@ -3719,7 +3719,7 @@ dependencies = [
- 
- [[package]]
- name = "codex-mcp-server"
--version = "0.0.0"
-+version = "0.153.4-meshagent.1"
- dependencies = [
-  "anyhow",
-  "app_test_support",
-@@ -3758,7 +3758,7 @@ dependencies = [
+@@ -3904,7 +3904,7 @@ dependencies = [
  
  [[package]]
  name = "codex-memories-extension"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-core",
   "codex-extension-api",
-@@ -3779,7 +3779,7 @@ dependencies = [
+@@ -3926,7 +3926,7 @@ dependencies = [
  
  [[package]]
  name = "codex-memories-read"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-protocol",
   "codex-shell-command",
-@@ -3789,7 +3789,7 @@ dependencies = [
+@@ -3936,7 +3936,7 @@ dependencies = [
  
  [[package]]
  name = "codex-memories-write"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -3826,7 +3826,7 @@ dependencies = [
+@@ -3973,7 +3973,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-mermaid"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "insta",
+  "pretty_assertions",
+@@ -3982,7 +3982,7 @@ dependencies = [
  
  [[package]]
  name = "codex-message-history"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-config",
   "memchr",
-@@ -3840,7 +3840,7 @@ dependencies = [
+@@ -3996,7 +3996,7 @@ dependencies = [
  
  [[package]]
  name = "codex-model-provider"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
-  "codex-agent-identity",
-  "codex-api",
-@@ -3864,7 +3864,7 @@ dependencies = [
+  "base64 0.22.1",
+  "chrono",
+@@ -4029,7 +4029,7 @@ dependencies = [
  
  [[package]]
  name = "codex-model-provider-info"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
-  "codex-api",
+  "codex-client",
   "codex-protocol",
-@@ -3881,7 +3881,7 @@ dependencies = [
+@@ -4047,7 +4047,7 @@ dependencies = [
  
  [[package]]
  name = "codex-models-manager"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "chrono",
-  "codex-collaboration-mode-templates",
-@@ -3901,7 +3901,7 @@ dependencies = [
+  "codex-http-client",
+@@ -4066,7 +4066,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-mxc-sandbox"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "anyhow",
+  "appcontainer_common",
+@@ -4088,7 +4088,7 @@ dependencies = [
  
  [[package]]
  name = "codex-network-proxy"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -3939,7 +3939,7 @@ dependencies = [
+@@ -4137,7 +4137,7 @@ dependencies = [
  
  [[package]]
  name = "codex-ollama"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "assert_matches",
   "async-stream",
-@@ -3959,7 +3959,7 @@ dependencies = [
+@@ -4157,7 +4157,7 @@ dependencies = [
  
  [[package]]
  name = "codex-otel"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
+  "bytes",
   "chrono",
-  "codex-api",
-@@ -3992,7 +3992,7 @@ dependencies = [
+@@ -4194,7 +4194,7 @@ dependencies = [
  
  [[package]]
  name = "codex-otel-trace-websocket"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "axum",
-@@ -4003,7 +4003,7 @@ dependencies = [
+@@ -4205,7 +4205,7 @@ dependencies = [
  
  [[package]]
  name = "codex-plugin"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-config",
-  "codex-protocol",
-@@ -4017,7 +4017,7 @@ dependencies = [
+  "codex-core-plugin-common",
+@@ -4220,7 +4220,7 @@ dependencies = [
  
  [[package]]
  name = "codex-process-hardening"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "libc",
   "pretty_assertions",
-@@ -4025,7 +4025,7 @@ dependencies = [
+@@ -4228,7 +4228,7 @@ dependencies = [
  
  [[package]]
  name = "codex-prompts"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
-  "codex-context-fragments",
-@@ -4039,7 +4039,7 @@ dependencies = [
+  "codex-collaboration-mode-templates",
+@@ -4245,7 +4245,7 @@ dependencies = [
  
  [[package]]
  name = "codex-protocol"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "chardetng",
-@@ -4083,7 +4083,7 @@ dependencies = [
+@@ -4289,7 +4289,7 @@ dependencies = [
  
  [[package]]
  name = "codex-queue-extension"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-core",
-@@ -4104,7 +4104,7 @@ dependencies = [
+@@ -4310,7 +4310,7 @@ dependencies = [
  
  [[package]]
  name = "codex-realtime-webrtc"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
-  "codex-install-context",
-@@ -4117,7 +4117,7 @@ dependencies = [
+  "codex-build-info",
+@@ -4328,7 +4328,7 @@ dependencies = [
  
  [[package]]
  name = "codex-response-debug-context"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "base64 0.22.1",
   "codex-api",
-@@ -4128,7 +4128,7 @@ dependencies = [
+@@ -4339,7 +4339,7 @@ dependencies = [
  
  [[package]]
  name = "codex-responses-api-proxy"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "clap",
-@@ -4145,7 +4145,7 @@ dependencies = [
+@@ -4356,7 +4356,7 @@ dependencies = [
  
  [[package]]
  name = "codex-rmcp-client"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "axum",
-@@ -4191,7 +4191,7 @@ dependencies = [
+@@ -4405,7 +4405,7 @@ dependencies = [
  
  [[package]]
  name = "codex-rollout"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -4218,7 +4218,7 @@ dependencies = [
+@@ -4433,7 +4433,7 @@ dependencies = [
  
  [[package]]
  name = "codex-rollout-trace"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-code-mode",
-@@ -4234,7 +4234,7 @@ dependencies = [
+@@ -4449,7 +4449,7 @@ dependencies = [
  
  [[package]]
  name = "codex-sandboxing"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
-  "appcontainer_common",
-@@ -4261,7 +4261,7 @@ dependencies = [
+  "codex-mxc-sandbox",
+@@ -4476,7 +4476,7 @@ dependencies = [
  
  [[package]]
  name = "codex-secrets"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "age",
   "anyhow",
-@@ -4282,7 +4282,7 @@ dependencies = [
+@@ -4497,7 +4497,7 @@ dependencies = [
  
  [[package]]
  name = "codex-shell-command"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -4305,7 +4305,7 @@ dependencies = [
+@@ -4520,7 +4520,7 @@ dependencies = [
  
  [[package]]
  name = "codex-shell-escalation"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "clap",
-@@ -4325,7 +4325,7 @@ dependencies = [
+@@ -4540,7 +4540,7 @@ dependencies = [
  
  [[package]]
  name = "codex-skills"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-protocol",
   "codex-shell-command",
-@@ -4342,7 +4342,7 @@ dependencies = [
+@@ -4557,7 +4557,7 @@ dependencies = [
  
  [[package]]
  name = "codex-skills-extension"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "assert_matches",
-  "codex-analytics",
-@@ -4379,7 +4379,7 @@ dependencies = [
+  "blake3",
+@@ -4594,7 +4594,7 @@ dependencies = [
  
  [[package]]
  name = "codex-state"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -4403,7 +4403,7 @@ dependencies = [
+@@ -4620,7 +4620,7 @@ dependencies = [
  
  [[package]]
  name = "codex-stdio-to-uds"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-uds",
-@@ -4415,7 +4415,7 @@ dependencies = [
+@@ -4632,7 +4632,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-tcp-tunnel"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "anyhow",
+  "bytes",
+@@ -4653,7 +4653,7 @@ dependencies = [
  
  [[package]]
  name = "codex-terminal-detection"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "pretty_assertions",
   "tracing",
-@@ -4423,7 +4423,7 @@ dependencies = [
+@@ -4661,7 +4661,7 @@ dependencies = [
  
  [[package]]
  name = "codex-test-binary-support"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-arg0",
   "tempfile",
-@@ -4431,7 +4431,7 @@ dependencies = [
+@@ -4669,7 +4669,7 @@ dependencies = [
  
  [[package]]
  name = "codex-thread-manager-sample"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "clap",
-@@ -4442,7 +4442,7 @@ dependencies = [
+@@ -4680,7 +4680,7 @@ dependencies = [
  
  [[package]]
  name = "codex-thread-store"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "chrono",
   "codex-app-server-protocol",
-@@ -4472,7 +4472,7 @@ dependencies = [
+@@ -4711,7 +4711,7 @@ dependencies = [
  
  [[package]]
  name = "codex-tools"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "bitflags 2.13.1",
   "codex-code-mode",
-@@ -4497,7 +4497,7 @@ dependencies = [
+@@ -4737,7 +4737,7 @@ dependencies = [
  
  [[package]]
  name = "codex-tui"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "app_test_support",
-@@ -4610,7 +4610,7 @@ dependencies = [
+@@ -4863,7 +4863,7 @@ dependencies = [
  
  [[package]]
  name = "codex-uds"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "async-io",
-  "pretty_assertions",
-@@ -4622,7 +4622,7 @@ dependencies = [
+  "libc",
+@@ -4877,7 +4877,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-user-verification"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "base64 0.22.1",
+  "core-foundation 0.10.1",
+@@ -4897,7 +4897,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-absolute-path"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "dirs",
   "dunce",
-@@ -4636,14 +4636,14 @@ dependencies = [
+@@ -4911,14 +4911,14 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-approval-presets"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-protocol",
  ]
@@ -1099,161 +1191,170 @@ index e217b70..186c8ea 100644
  [[package]]
  name = "codex-utils-audio"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "base64 0.22.1",
   "codex-protocol",
-@@ -4657,7 +4657,7 @@ dependencies = [
+@@ -4932,7 +4932,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-cache"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "lru",
   "sha1 0.10.6",
-@@ -4666,7 +4666,7 @@ dependencies = [
+@@ -4941,7 +4941,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-cargo-bin"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "assert_cmd",
   "runfiles",
-@@ -4675,7 +4675,7 @@ dependencies = [
+@@ -4950,7 +4950,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-cli"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "clap",
   "codex-protocol",
-@@ -4687,15 +4687,15 @@ dependencies = [
+@@ -4962,15 +4962,15 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-elapsed"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  
  [[package]]
  name = "codex-utils-fuzzy-match"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  
  [[package]]
  name = "codex-utils-git-discovery"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-git-utils",
   "codex-utils-absolute-path",
-@@ -4708,7 +4708,7 @@ dependencies = [
+@@ -4983,7 +4983,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-home-dir"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-utils-absolute-path",
   "dirs",
-@@ -4718,7 +4718,7 @@ dependencies = [
+@@ -4993,7 +4993,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-image"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "base64 0.22.1",
   "codex-utils-cache",
-@@ -4731,7 +4731,7 @@ dependencies = [
+@@ -5007,7 +5007,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-json-to-toml"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "pretty_assertions",
   "serde_json",
-@@ -4740,7 +4740,7 @@ dependencies = [
+@@ -5016,7 +5016,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-oss"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-core",
   "codex-lmstudio",
-@@ -4750,7 +4750,7 @@ dependencies = [
+@@ -5026,7 +5026,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-output-truncation"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-protocol",
   "codex-utils-string",
-@@ -4759,7 +4759,7 @@ dependencies = [
+@@ -5035,7 +5035,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-path"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-utils-absolute-path",
   "dunce",
-@@ -4769,7 +4769,7 @@ dependencies = [
+@@ -5046,7 +5046,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-path-uri"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "base64 0.22.1",
   "codex-utils-absolute-path",
-@@ -4785,7 +4785,7 @@ dependencies = [
+@@ -5062,7 +5062,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-plugins"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-exec-server",
   "codex-exec-server-protocol",
-@@ -4799,7 +4799,7 @@ dependencies = [
+@@ -5076,7 +5076,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-utils-process"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "pretty_assertions",
+  "tokio",
+@@ -5084,7 +5084,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-pty"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
-  "filedescriptor",
-@@ -4815,7 +4815,7 @@ dependencies = [
+  "ctor 0.6.3",
+@@ -5102,7 +5102,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-readiness"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "assert_matches",
   "thiserror 2.0.18",
-@@ -4825,7 +4825,7 @@ dependencies = [
+@@ -5112,7 +5112,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-redacted-string"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "schemars 0.8.22",
   "serde",
-@@ -4833,14 +4833,14 @@ dependencies = [
+@@ -5120,14 +5120,14 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-rustls-provider"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "rustls",
  ]
@@ -1261,25 +1362,25 @@ index e217b70..186c8ea 100644
  [[package]]
  name = "codex-utils-sandbox-summary"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-protocol",
   "codex-utils-absolute-path",
-@@ -4849,7 +4849,7 @@ dependencies = [
+@@ -5137,7 +5137,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-sleep-inhibitor"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "core-foundation 0.9.4",
   "libc",
-@@ -4859,14 +4859,14 @@ dependencies = [
+@@ -5147,14 +5147,14 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-stream-parser"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "pretty_assertions",
  ]
@@ -1287,16 +1388,16 @@ index e217b70..186c8ea 100644
  [[package]]
  name = "codex-utils-string"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "pretty_assertions",
   "regex-lite",
-@@ -4876,14 +4876,14 @@ dependencies = [
+@@ -5164,14 +5164,14 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-template"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "pretty_assertions",
  ]
@@ -1304,92 +1405,101 @@ index e217b70..186c8ea 100644
  [[package]]
  name = "codex-v8-poc"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "pretty_assertions",
   "v8",
-@@ -4891,7 +4891,7 @@ dependencies = [
+@@ -5179,7 +5179,7 @@ dependencies = [
  
  [[package]]
  name = "codex-voice-host"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-install-context",
-@@ -4905,7 +4905,7 @@ dependencies = [
+@@ -5206,7 +5206,7 @@ dependencies = [
  
  [[package]]
  name = "codex-web-search-extension"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-api",
   "codex-core",
-@@ -4926,7 +4926,7 @@ dependencies = [
+@@ -5228,7 +5228,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-websocket-auth"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "anyhow",
+  "base64 0.22.1",
+@@ -5247,7 +5247,7 @@ dependencies = [
  
  [[package]]
  name = "codex-websocket-client"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-http-client",
   "codex-utils-rustls-provider",
-@@ -4942,7 +4942,7 @@ dependencies = [
+@@ -5263,7 +5263,7 @@ dependencies = [
  
  [[package]]
  name = "codex-windows-sandbox"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -4968,7 +4968,7 @@ dependencies = [
+@@ -5291,7 +5291,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-windows-sandbox-service"
+-version = "0.0.0"
++version = "0.160.0-meshagent.1"
+ dependencies = [
+  "anyhow",
+  "codex-cloud-config",
+@@ -5308,7 +5308,7 @@ dependencies = [
  
  [[package]]
  name = "codex-workload-identity"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "codex-http-client",
   "pretty_assertions",
-@@ -4983,7 +4983,7 @@ dependencies = [
+@@ -5323,7 +5323,7 @@ dependencies = [
  
  [[package]]
  name = "codex-worktree"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "codex-git-utils",
-@@ -5222,7 +5222,7 @@ dependencies = [
+@@ -5563,7 +5563,7 @@ dependencies = [
  
  [[package]]
  name = "core_test_support"
 -version = "0.0.0"
-+version = "0.153.4-meshagent.1"
++version = "0.160.0-meshagent.1"
  dependencies = [
   "anyhow",
   "assert_cmd",
-@@ -9520,7 +9520,7 @@ dependencies = [
- 
- [[package]]
- name = "mcp_test_support"
--version = "0.0.0"
-+version = "0.153.4-meshagent.1"
- dependencies = [
-  "anyhow",
-  "codex-login",
 diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
-index 351d1e6..791f284 100644
+index 1a60bc3..d2f5521 100644
 --- a/codex-rs/Cargo.toml
 +++ b/codex-rs/Cargo.toml
-@@ -147,7 +147,7 @@ members = [
+@@ -158,7 +158,7 @@ members = [
  resolver = "2"
  
  [workspace.package]
--version = "0.153.4"
-+version = "0.153.4-meshagent.1"
+-version = "0.160.0"
++version = "0.160.0-meshagent.1"
  # Track the edition for all workspace crates in one place. Individual
  # crates can still override this value, but keeping it here means new
  # crates created with `cargo new -w ...` automatically inherit the 2024
@@ -1407,10 +1517,10 @@ index 32ef932..e6227a7 100644
      codex_home: Option<PathBuf>,
  
 diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
-index 71d0323..5801878 100644
+index bdd7771..ec4ae46 100644
 --- a/codex-rs/cli/src/main.rs
 +++ b/codex-rs/cli/src/main.rs
-@@ -96,18 +96,17 @@ use codex_protocol::protocol::AskForApproval;
+@@ -107,18 +107,17 @@ use codex_protocol::protocol::AskForApproval;
  use codex_protocol::user_input::UserInput;
  use codex_terminal_detection::TerminalName;
  
@@ -1434,6 +1544,23 @@ index 71d0323..5801878 100644
      bin_name = "codex",
      override_usage = "codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]"
  )]
+diff --git a/codex-rs/cli/src/snapshots/codex__exec_server_args_tests__exec_server_help_documents_remote_options.snap b/codex-rs/cli/src/snapshots/codex__exec_server_args_tests__exec_server_help_documents_remote_options.snap
+index 2010b1e..11e178d 100644
+--- a/codex-rs/cli/src/snapshots/codex__exec_server_args_tests__exec_server_help_documents_remote_options.snap
++++ b/codex-rs/cli/src/snapshots/codex__exec_server_args_tests__exec_server_help_documents_remote_options.snap
+@@ -13,9 +13,9 @@ Commands:
+ Options:
+   -c, --config <key=value>
+           Override a configuration value that would otherwise be loaded from
+-          `~/.codex/config.toml`. Use a dotted path (`foo.bar.baz`) to override
+-          nested values. The `value` portion is parsed as TOML. If it fails to
+-          parse as TOML, the raw string is used as a literal.
++          `~/.meshagent/codex/config.toml`. Use a dotted path (`foo.bar.baz`) to
++          override nested values. The `value` portion is parsed as TOML. If it
++          fails to parse as TOML, the raw string is used as a literal.
+ 
+           Examples: - `-c model="o3"` - `-c
+           'sandbox_permissions=["disk-full-read-access"]'` - `-c
 diff --git a/codex-rs/cli/tests/sandbox_cloud_config.rs b/codex-rs/cli/tests/sandbox_cloud_config.rs
 index 81fbf07..56379d0 100644
 --- a/codex-rs/cli/tests/sandbox_cloud_config.rs
@@ -1447,70 +1574,302 @@ index 81fbf07..56379d0 100644
          );
      }
  
+diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__empty_state_animation_tests__fresh_thread_header.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__empty_state_animation_tests__fresh_thread_header.snap
+index 1261499..2e0792f 100644
+--- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__empty_state_animation_tests__fresh_thread_header.snap
++++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__empty_state_animation_tests__fresh_thread_header.snap
+@@ -4,7 +4,7 @@ expression: "format!(\"enabled:\\n{}\\n---\\ndisabled:\\n{}\", text(after), text
+ ---
+ enabled:
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+      /tmp/project
+ 
+   Pull up a prompt.
+@@ -50,7 +50,7 @@ enabled:
+ ---
+ disabled:
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+      /tmp/project
+ 
+   Pull up a prompt.
+diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap
+index 8aa1bca..5e5157c 100644
+--- a/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap
++++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap
+@@ -1,10 +1,9 @@
+ ---
+ source: tui/src/app/tests.rs
+-assertion_line: 6513
+ expression: rendered
+ ---
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+      <thread cwd>
+ 
+ 
 diff --git a/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs b/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
-index 93298bc..5fe33a9 100644
+index 0fbf795..8d470f8 100644
 --- a/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
 +++ b/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
-@@ -2196,14 +2196,14 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
-         };
+@@ -2717,7 +2717,7 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
+         overlay.set_highlight_cell(Some(0));
          let partial = render_overlay(overlay);
-         assert!(partial.contains("Earlier messages are available — scroll up to load them"));
+         assert!(partial.contains("Earlier messages available."));
 -        assert!(!partial.contains("OpenAI Codex"));
 +        assert!(!partial.contains("MeshAgent Codex"));
          assert!(!partial.contains("This is a test announcement"));
          assert!(!partial.contains('%'));
  
-         overlay.set_history_state(crate::pager_overlay::TranscriptHistoryState::LoadingOlder);
+@@ -2727,7 +2727,7 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
+         )?;
          let loading = render_overlay(overlay);
-         assert!(loading.contains("Loading earlier messages..."));
+         assert!(loading.contains("Loading earlier messages…"));
 -        assert!(!loading.contains("OpenAI Codex"));
 +        assert!(!loading.contains("MeshAgent Codex"));
          assert!(!loading.contains('%'));
      } else {
          panic!("expected transcript overlay");
+@@ -3249,7 +3249,10 @@ async fn managed_worktree_transitions_bind_owner_and_preserve_only_fork_history(
+     let project_pool = dunce::canonicalize(root.path())?.join("project-pool");
+     fs::create_dir_all(&home)?;
+     fs::create_dir_all(source.join(".codex"))?;
+-    fs::write(home.join("config.toml"), "[features]\nworktrees = true\n")?;
++    fs::write(
++        home.join("config.toml"),
++        "model_provider = \"openai\"\n[features]\nworktrees = true\n",
++    )?;
+     crate::legacy_core::config::set_project_trust_level(
+         &home,
+         &source,
+@@ -3331,7 +3334,7 @@ model_reasoning_effort = "low"
+     let contents = fs::read_to_string(&host_config)?;
+     fs::write(
+         host_config,
+-        format!("model_provider = \"ollama\"\n{contents}"),
++        contents.replace("model_provider = \"openai\"", "model_provider = \"ollama\""),
+     )?;
+     let original = app.chat_widget.thread_id().expect("original thread");
+     server.thread_inject_items(original, vec![serde_json::from_value(serde_json::json!({
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap
+index 335071a..4cd69e1 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap
+@@ -4,7 +4,7 @@ expression: "format!(\"{history}\\n{}\",\nrender_bottom_popup(&app.chat_widget,\
+ ---
+ • This conversation is unavailable. Its cached transcript and draft remain here; input is paused. Open the agent picker or return to the parent to continue.
+ ⚠ A background Codex service is running v2.0.0, different from your Codex CLI
+-  v0.0.0.
++  v0.160.0-meshagent.1.
+ › unavailable draft
+ 
+   gpt-test default · /tmp/project
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap
+index ab3a8c8..97facd4 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap
+@@ -1,10 +1,9 @@
+ ---
+ source: tui/src/app/tests/realtime_requests.rs
+-assertion_line: 889
+ expression: "normalize_voice_snapshot_directory(&rendered, &app.config.cwd)"
+ ---
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+      /tmp/project
+ 
+   To get started, describe a task or try one of these commands:
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_completed_after_thread_switch.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_completed_after_thread_switch.snap
+index 2ecde20..f767ffe 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_completed_after_thread_switch.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_completed_after_thread_switch.snap
+@@ -1,10 +1,9 @@
+ ---
+ source: tui/src/app/tests/realtime_requests.rs
+-assertion_line: 1093
+ expression: "normalize_voice_snapshot_directory(&rendered, &app.config.cwd)"
+ ---
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+      /tmp/project
+ 
+   To get started, describe a task or try one of these commands:
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap
+index 5c3a9d2..afb8392 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap
+@@ -1,6 +1,5 @@
+ ---
+ source: tui/src/app/tests/realtime_requests.rs
+-assertion_line: 479
+ expression: "normalize_voice_snapshot_directory(&format!(\"Other task:\\n{other_ui}\\nRestored owner:\\n{}\\n{rendered}\",\nrender_bottom_popup(&app.chat_widget, 80)), &app.config.cwd,)"
+ ---
+ Other task:
+@@ -15,7 +14,7 @@ Restored owner:
+ 
+   gpt-test default · /tmp/project
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+      /tmp/project
+ 
+   To get started, describe a task or try one of these commands:
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_replay_reconciles_matching_captions.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_replay_reconciles_matching_captions.snap
+index 0dfd733..0353566 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_replay_reconciles_matching_captions.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_replay_reconciles_matching_captions.snap
+@@ -1,10 +1,9 @@
+ ---
+ source: tui/src/app/tests/realtime_requests.rs
+-assertion_line: 716
+ expression: "normalize_voice_snapshot_directory(&rendered, &app.config.cwd)"
+ ---
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+      /tmp/project
+ 
+   To get started, describe a task or try one of these commands:
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__startup_frame_tests__startup_tip_in_transcript.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__startup_frame_tests__startup_tip_in_transcript.snap
+index 8ed7c18..f87a02e 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__startup_frame_tests__startup_tip_in_transcript.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__startup_frame_tests__startup_tip_in_transcript.snap
+@@ -1,11 +1,10 @@
+ ---
+ source: tui/src/app/tests/startup_frame_tests.rs
+-assertion_line: 72
+ expression: "normalize_snapshot_paths(normalize_agent_center_snapshot(snapshots.join(\"\\n\\n\")))"
+ ---
+ 80 columns
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+      /tmp/project
+ 
+   Pull up a prompt.
+@@ -27,7 +26,7 @@ expression: "normalize_snapshot_paths(normalize_agent_center_snapshot(snapshots.
+ 
+ 32 columns
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-…
+      /tmp/project
+ 
+   Pull up a prompt.
+diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
+index a46aed6..a86bca7 100644
+--- a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
++++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__command_popup__tests__command_popup_default_items.snap
+@@ -3,6 +3,7 @@ source: tui/src/bottom_pane/command_popup.rs
+ expression: commands
+ ---
+ /model - choose what model and reasoning effort to use
++/project - choose the active MeshAgent project
+ /ide - include current selection, open files, and other context from your IDE
+ /permissions - choose what Codex is allowed to do
+ /keymap - remap TUI shortcuts
 diff --git a/codex-rs/tui/src/chatwidget/rendering_tests.rs b/codex-rs/tui/src/chatwidget/rendering_tests.rs
-index beac194..9b0de15 100644
+index 624d587..87d910e 100644
 --- a/codex-rs/tui/src/chatwidget/rendering_tests.rs
 +++ b/codex-rs/tui/src/chatwidget/rendering_tests.rs
-@@ -168,12 +168,12 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
-     let normalized_cwd = format!("{:<width$}", "/tmp/project", width = cwd.len());
+@@ -401,7 +401,7 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
+     let cwd = widget.config.cwd.as_path().display().to_string();
  
-     insta::assert_snapshot!(header.replace(&cwd, &normalized_cwd), @r"
--    ╭───────────────────────────────────────╮
--    │ >_ OpenAI Codex (v<VERSION>)              │
--    │                                       │
--    │ model:     loading   /model to change │
--    │ directory: /tmp/project               │
--    ╰───────────────────────────────────────╯
-+    ╭───────────────────────────────────────────╮
-+    │ >_ MeshAgent Codex (v<VERSION>) │
-+    │                                           │
-+    │ model:     loading   /model to change     │
-+    │ directory: /tmp/project                   │
-+    ╰───────────────────────────────────────────╯
+     insta::assert_snapshot!(header.replace(&cwd, "/tmp/project"), @r"
+-      >_ OpenAI Codex (v<VERSION>)
++      >_ MeshAgent Codex (v<VERSION>)
+          /tmp/project
      ");
  }
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap
+index 915041d..6ae87e2 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap
+@@ -1,8 +1,7 @@
+ ---
+ source: tui/src/chatwidget/tests/app_server.rs
+-assertion_line: 99
+ expression: rendered
+ ---
+-OpenAI Codex (v<VERSION>)
++MeshAgent Codex (v<VERSION>)
+ model: GPT-5.6 Luna high
+ directory: /tmp/thread-settings
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_startup.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_startup.snap
+index 65f9035..eeadb3b 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_startup.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_startup.snap
+@@ -1,9 +1,8 @@
+ ---
+ source: tui/src/chatwidget/tests/app_server.rs
+-assertion_line: 99
+ expression: rendered
+ ---
+-OpenAI Codex (v<VERSION>)
++MeshAgent Codex (v<VERSION>)
+ model: GPT-5.6 Luna high
+ directory: /tmp/thread-settings
  
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_unknown_model.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_unknown_model.snap
+index 147a544..18c7aea 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_unknown_model.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_unknown_model.snap
+@@ -3,6 +3,6 @@ source: tui/src/chatwidget/tests/app_server.rs
+ assertion_line: 99
+ expression: rendered
+ ---
+-OpenAI Codex (v<VERSION>)
++MeshAgent Codex (v<VERSION>)
+ model: us.openai.gpt-5.6-luna high
+ directory: /tmp/thread-settings
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_copy_picker_status_fields.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_copy_picker_status_fields.snap
+index b280121..babf620 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_copy_picker_status_fields.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_copy_picker_status_fields.snap
+@@ -5,7 +5,7 @@ expression: "render_bottom_popup(&chat,\n100).replace(&directory,\n\"[[workspace
+   Copy to clipboard
+ 
+ 
+-› 1. Whole status  >_ OpenAI Codex (vVERSION)
++› 1. Whole status  >_ MeshAgent Codex (vVERSION)
+   2. Model         gpt-5.5
+   3. Directory     [[workspace]]
+   4. Thread name   Clipboard example
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_copy_whole_status.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_copy_whole_status.snap
+index 1da4b4a..0a86562 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_copy_whole_status.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_copy_whole_status.snap
+@@ -2,7 +2,7 @@
+ source: tui/src/chatwidget/tests/slash_commands.rs
+ expression: "whole_status.replace(&directory,\n\"[[workspace]]\").replace(crate::version::CODEX_CLI_VERSION, \"VERSION\")"
+ ---
+->_ OpenAI Codex (vVERSION)
++>_ MeshAgent Codex (vVERSION)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/history_cell/session.rs b/codex-rs/tui/src/history_cell/session.rs
-index 03df014..f95adb9 100644
+index 11cce0e..16480f4 100644
 --- a/codex-rs/tui/src/history_cell/session.rs
 +++ b/codex-rs/tui/src/history_cell/session.rs
-@@ -317,10 +317,10 @@ impl HistoryCell for SessionHeaderHistoryCell {
- 
-         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
- 
--        // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
-+        // Title line rendered inside the box: ">_ MeshAgent Codex (vX)"
-         let title_spans: Vec<Span<'static>> = vec![
-             Span::from(">_ ").dim(),
--            Span::from("OpenAI Codex").bold(),
-+            Span::from(crate::version::CODEX_PRODUCT_NAME).bold(),
-             Span::from(" ").dim(),
-             Span::from(format!("(v{})", self.version)).dim(),
-         ];
-@@ -391,7 +391,11 @@ impl HistoryCell for SessionHeaderHistoryCell {
- 
-     fn raw_lines(&self) -> Vec<Line<'static>> {
+@@ -48,7 +48,7 @@ pub(crate) fn with_border_with_inner_width(
+ pub(crate) fn codex_title(version: &str) -> Vec<Span<'static>> {
+     vec![
+         ">_ ".fg(accent_color()),
+-        "OpenAI Codex".bold(),
++        crate::version::CODEX_PRODUCT_NAME.bold(),
+         format!(" (v{version})").dim(),
+     ]
+ }
+@@ -393,7 +393,11 @@ impl HistoryCell for SessionHeaderHistoryCell {
+                 .collect();
+         }
          let mut lines = vec![
 -            Line::from(format!("OpenAI Codex (v{})", self.version)),
 +            Line::from(format!(
@@ -1522,13 +1881,11 @@ index 03df014..f95adb9 100644
                  "model: {}{}",
                  self.model,
 diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__pnpm_update_available_history_cell_snapshot.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__pnpm_update_available_history_cell_snapshot.snap
-index a9dd9ca..3755470 100644
+index a9dd9ca..7ab5cf0 100644
 --- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__pnpm_update_available_history_cell_snapshot.snap
 +++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__pnpm_update_available_history_cell_snapshot.snap
-@@ -1,11 +1,12 @@
- ---
+@@ -2,10 +2,10 @@
  source: tui/src/history_cell/tests.rs
-+assertion_line: 1463
  expression: rendered
  ---
 -╭─────────────────────────────────────────────────╮
@@ -1539,160 +1896,114 @@ index a9dd9ca..3755470 100644
 -│ https://github.com/openai/codex/releases/latest │
 -╰─────────────────────────────────────────────────╯
 +╭───────────────────────────────────────────────────╮
-+│ ✨ Update available! 0.153.4-meshagent.1 -> 9.9.9 │
++│ ✨ Update available! 0.160.0-meshagent.1 -> 9.9.9 │
 +│ Run pnpm add -g @openai/codex to update.          │
 +│                                                   │
 +│ See full release notes:                           │
 +│ https://github.com/openai/codex/releases/latest   │
 +╰───────────────────────────────────────────────────╯
 diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_clamps_to_narrow_width.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_clamps_to_narrow_width.snap
-index 2baf486..4bcd155 100644
+index 13e70b5..1c775ef 100644
 --- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_clamps_to_narrow_width.snap
 +++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_clamps_to_narrow_width.snap
-@@ -1,9 +1,10 @@
+@@ -1,9 +1,8 @@
  ---
  source: tui/src/history_cell/tests.rs
-+assertion_line: 1992
+-assertion_line: 1867
  expression: "render_lines(&lines).join(\"\\n\")"
  ---
- ╭──────────────────────────────────────────╮
--│ >_ OpenAI Codex (vtest)                  │
-+│ >_ MeshAgent Codex (vtest)               │
- │                                          │
- │ model:       gpt-5.6-sol xhigh   fast  … │
- │ directory:   project                     │
+ 
+-  >_ OpenAI Codex (vtest)
++  >_ MeshAgent Codex (vtest)
+      project
+   permissions: YOLO mode
 diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_directory.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_directory.snap
-index 51d3652..f78244b 100644
+index fa464a0..31e74b0 100644
 --- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_directory.snap
 +++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_directory.snap
-@@ -1,12 +1,13 @@
+@@ -1,20 +1,19 @@
  ---
  source: tui/src/history_cell/tests.rs
-+assertion_line: 2049
+-assertion_line: 1903
  expression: "format!(\"{buf:?}\")"
  ---
  Buffer {
-     area: Rect { x: 0, y: 0, width: 42, height: 6 },
+     area: Rect { x: 0, y: 0, width: 42, height: 3 },
      content: [
-         "╭────────────────────────────────────────╮",
--        "│ >_ OpenAI Codex (vtest)                │",
-+        "│ >_ MeshAgent Codex (vtest)             │",
-         "│                                        │",
-         "│ model:     gpt-5   /model to change    │",
-         "│ directory: …ﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ-project │", // hidden by multi-width symbols: [(15, " "), (17, " "), (19, " "), (21, " "), (23, " "), (25, " "), (27, " "), (29, " "), (31, " ")]
-@@ -15,7 +16,7 @@ Buffer {
+         "                                          ",
+-        "  >_ OpenAI Codex (vtest)                 ",
++        "  >_ MeshAgent Codex (vtest)              ",
+         "     …ｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ-project", // hidden by multi-width symbols: [(7, " "), (9, " "), (11, " "), (13, " "), (15, " "), (17, " "), (19, " "), (21, " "), (23, " "), (25, " "), (27, " "), (29, " "), (31, " "), (33, " ")]
+     ],
      styles: [
-         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
          x: 5, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
 -        x: 17, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+-        x: 25, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
 +        x: 20, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-         x: 13, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-         x: 18, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-         x: 21, y: 3, fg: Cyan, bg: Reset, underline: Reset, modifier: NONE,
-diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_sound_marks.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_sound_marks.snap
-index 0fb1727..b3ea518 100644
---- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_sound_marks.snap
-+++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_sound_marks.snap
-@@ -1,12 +1,13 @@
- ---
- source: tui/src/history_cell/tests.rs
-+assertion_line: 2030
- expression: "format!(\"{buf:?}\")"
- ---
- Buffer {
-     area: Rect { x: 0, y: 0, width: 80, height: 6 },
-     content: [
-         "╭───────────────────────────────────────────╮                                   ",
--        "│ >_ OpenAI Codex (vtest)                   │                                   ",
-+        "│ >_ MeshAgent Codex (vtest)                │                                   ",
-         "│                                           │                                   ",
-         "│ model:     gpt-5-ｶﾞ-ﾊﾟ   /model to change │                                   ", // hidden by multi-width symbols: [(20, " "), (23, " ")]
-         "│ directory: project                        │                                   ",
-@@ -17,7 +18,7 @@ Buffer {
-         x: 45, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-         x: 0, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-         x: 5, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
--        x: 17, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-+        x: 20, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-         x: 45, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-         x: 0, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-         x: 45, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
++        x: 28, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+         x: 5, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+         x: 7, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+         x: 8, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
 diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_indicates_yolo_mode.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_indicates_yolo_mode.snap
-index 04f6458..be61231 100644
+index ab195e3..d918003 100644
 --- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_indicates_yolo_mode.snap
 +++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_indicates_yolo_mode.snap
-@@ -1,9 +1,10 @@
+@@ -1,9 +1,8 @@
  ---
--source: tui/src/history_cell.rs
-+source: tui/src/history_cell/tests.rs
-+assertion_line: 2011
+ source: tui/src/history_cell/tests.rs
+-assertion_line: 1885
  expression: rendered
  ---
- ╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (vtest)               │
-+│ >_ MeshAgent Codex (vtest)            │
- │                                       │
- │ model:       gpt-5   /model to change │
- │ directory:   /tmp/project             │
+ 
+-  >_ OpenAI Codex (vtest)
++  >_ MeshAgent Codex (vtest)
+      /tmp/project
+   permissions: YOLO mode
 diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_info_availability_nux_tooltip_snapshot.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_info_availability_nux_tooltip_snapshot.snap
-index ad0fc4b..4274e30 100644
+index e5cc9a0..485b2d0 100644
 --- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_info_availability_nux_tooltip_snapshot.snap
 +++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_info_availability_nux_tooltip_snapshot.snap
-@@ -1,12 +1,13 @@
+@@ -1,10 +1,9 @@
  ---
--source: tui/src/history_cell.rs
-+source: tui/src/history_cell/tests.rs
-+assertion_line: 936
+ source: tui/src/history_cell/tests.rs
+-assertion_line: 778
  expression: rendered
  ---
--╭─────────────────────────────────────╮
--│ >_ OpenAI Codex (v0.0.0)            │
--│                                     │
--│ model:     gpt-5   /model to change │
--│ directory: /tmp/project             │
--╰─────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v0.153.4-meshagent.1) │
-+│                                           │
-+│ model:     gpt-5   /model to change       │
-+│ directory: /tmp/project                   │
-+╰───────────────────────────────────────────╯
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+      /tmp/project
  
    Tip: Model just became available
 diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__standalone_unix_update_available_history_cell_snapshot.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__standalone_unix_update_available_history_cell_snapshot.snap
-index c8f352d..0c7333f 100644
+index c8f352d..01e5d42 100644
 --- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__standalone_unix_update_available_history_cell_snapshot.snap
 +++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__standalone_unix_update_available_history_cell_snapshot.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/history_cell/tests.rs
-+assertion_line: 1445
+@@ -3,7 +3,7 @@ source: tui/src/history_cell/tests.rs
  expression: rendered
  ---
  ╭─────────────────────────────────────────────────────────────────────────────────────────────────────╮
 -│ ✨ Update available! 0.0.0 -> 9.9.9                                                                 │
-+│ ✨ Update available! 0.153.4-meshagent.1 -> 9.9.9                                                   │
++│ ✨ Update available! 0.160.0-meshagent.1 -> 9.9.9                                                   │
  │ Run sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh' to update. │
  │                                                                                                     │
  │ See full release notes:                                                                             │
 diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__standalone_windows_update_available_history_cell_snapshot.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__standalone_windows_update_available_history_cell_snapshot.snap
-index fb15a05..f5aad2e 100644
+index fb15a05..6401a8e 100644
 --- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__standalone_windows_update_available_history_cell_snapshot.snap
 +++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__standalone_windows_update_available_history_cell_snapshot.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/history_cell/tests.rs
-+assertion_line: 1454
+@@ -3,7 +3,7 @@ source: tui/src/history_cell/tests.rs
  expression: rendered
  ---
  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 -│ ✨ Update available! 0.0.0 -> 9.9.9                                                                        │
-+│ ✨ Update available! 0.153.4-meshagent.1 -> 9.9.9                                                          │
++│ ✨ Update available! 0.160.0-meshagent.1 -> 9.9.9                                                          │
  │ Run powershell -ExecutionPolicy Bypass -c '$env:CODEX_NON_INTERACTIVE=1; irm                               │
  │ https://chatgpt.com/codex/install.ps1 | iex' to update.                                                    │
  │                                                                                                            │
 diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__vite_plus_update_available_history_cell_snapshot.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__vite_plus_update_available_history_cell_snapshot.snap
-index 1a2df82..cbf5310 100644
+index 1a2df82..89e3466 100644
 --- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__vite_plus_update_available_history_cell_snapshot.snap
 +++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__vite_plus_update_available_history_cell_snapshot.snap
 @@ -2,10 +2,10 @@
@@ -1707,17 +2018,17 @@ index 1a2df82..cbf5310 100644
 -│ https://github.com/openai/codex/releases/latest │
 -╰─────────────────────────────────────────────────╯
 +╭───────────────────────────────────────────────────╮
-+│ ✨ Update available! 0.153.4-meshagent.1 -> 9.9.9 │
++│ ✨ Update available! 0.160.0-meshagent.1 -> 9.9.9 │
 +│ Run vp install -g @openai/codex to update.        │
 +│                                                   │
 +│ See full release notes:                           │
 +│ https://github.com/openai/codex/releases/latest   │
 +╰───────────────────────────────────────────────────╯
 diff --git a/codex-rs/tui/src/keymap.rs b/codex-rs/tui/src/keymap.rs
-index 2a008a8..dafe6b5 100644
+index 2ff06d2..097559a 100644
 --- a/codex-rs/tui/src/keymap.rs
 +++ b/codex-rs/tui/src/keymap.rs
-@@ -2051,7 +2051,7 @@ impl RuntimeKeymap {
+@@ -2352,7 +2352,7 @@ impl RuntimeKeymap {
                      }
                      return Err(format!(
                          "Ambiguous approval overlay keymap bindings: `{previous}` and `{action}` use the same key. \
@@ -1726,7 +2037,7 @@ index 2a008a8..dafe6b5 100644
  See the Codex keymap documentation for supported actions and examples."
                      ));
                  }
-@@ -2077,7 +2077,7 @@ fn validate_unique<'a>(
+@@ -2378,7 +2378,7 @@ fn validate_unique<'a>(
              if let Some(previous) = seen.insert(key, action) {
                  return Err(format!(
                      "Ambiguous `tui.keymap.{context}` bindings: `{previous}` and `{action}` use the same key. \
@@ -1735,7 +2046,7 @@ index 2a008a8..dafe6b5 100644
  See the Codex keymap documentation for supported actions and examples."
                  ));
              }
-@@ -2113,7 +2113,7 @@ fn validate_no_shadow_with_allowed_overlaps<const N: usize, const M: usize, cons
+@@ -2414,7 +2414,7 @@ fn validate_no_shadow_with_allowed_overlaps<const N: usize, const M: usize, cons
                  }
                  return Err(format!(
                      "Ambiguous `tui.keymap.{context}` bindings: `{previous}` shadows `{action}` with the same key. \
@@ -1744,7 +2055,7 @@ index 2a008a8..dafe6b5 100644
  See the Codex keymap documentation for supported actions and examples."
                  ));
              }
-@@ -2146,7 +2146,7 @@ fn validate_no_reserved<'a, const A: usize>(
+@@ -2447,7 +2447,7 @@ fn validate_no_reserved<'a, const A: usize>(
                  }
                  return Err(format!(
                      "Ambiguous `tui.keymap.{context}` bindings: `{action}` uses a key reserved by `{reserved_action}`. \
@@ -1754,7 +2065,7 @@ index 2a008a8..dafe6b5 100644
                  ));
              }
 diff --git a/codex-rs/tui/src/keymap/conflict_tests.rs b/codex-rs/tui/src/keymap/conflict_tests.rs
-index aa7b034..d45f814 100644
+index 583e99e..c22a4ee 100644
 --- a/codex-rs/tui/src/keymap/conflict_tests.rs
 +++ b/codex-rs/tui/src/keymap/conflict_tests.rs
 @@ -30,7 +30,7 @@ fn conflicting_contexts_report_the_first_conflict_in_validation_order() {
@@ -1767,663 +2078,547 @@ index aa7b034..d45f814 100644
              )
          );
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_after_long_transcript_fresh_header_only.snap b/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_after_long_transcript_fresh_header_only.snap
-index 98d6015..5e7a610 100644
+index b11e54d..dfd94a6 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_after_long_transcript_fresh_header_only.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_after_long_transcript_fresh_header_only.snap
-@@ -1,9 +1,10 @@
+@@ -1,8 +1,7 @@
  ---
--source: tui/src/app.rs
-+source: tui/src/app/tests.rs
-+assertion_line: 5371
+ source: tui/src/app/tests.rs
+-assertion_line: 5874
  expression: rendered
  ---
- ╭─────────────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)                │
-+│ >_ MeshAgent Codex (v<VERSION>)             │
- │                                             │
- │ model:     gpt-test high   /model to change │
- │ directory: /tmp/project                     │
-diff --git a/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_header_fast_status_fast_capable_models.snap b/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_header_fast_status_fast_capable_models.snap
-index 08afd02..84ae853 100644
---- a/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_header_fast_status_fast_capable_models.snap
-+++ b/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_header_fast_status_fast_capable_models.snap
-@@ -1,9 +1,10 @@
+ 
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      /tmp/project
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__layout__tests__owned_startup_layout.snap b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__layout__tests__owned_startup_layout.snap
+index 957e753..654fc66 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__layout__tests__owned_startup_layout.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__layout__tests__owned_startup_layout.snap
+@@ -4,7 +4,7 @@ expression: "format!(\"cursor={:?}\\n{frame}\",\nlayout.cursor_pos(area)).replac
  ---
--source: tui/src/app.rs
-+source: tui/src/app/tests.rs
-+assertion_line: 5406
- expression: rendered
- ---
- ╭────────────────────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)                       │
-+│ >_ MeshAgent Codex (v<VERSION>)                    │
- │                                                    │
- │ model:     gpt-5.4 xhigh   fast   /model to change │
- │ directory: /tmp/project                            │
+ cursor=Some((13, 12))
+                                                 
+-  >_ OpenAI Codex (v<VERSION>)                      
++  >_ MeshAgent Codex (v<VERSION>)     
+      loading                                    
+                                                 
+   Pull up a prompt.                             
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_fresh_session_transitions.snap b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_fresh_session_transitions.snap
-index 32f6de9..635f045 100644
+index fb019c0..f5dd1e2 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_fresh_session_transitions.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_fresh_session_transitions.snap
-@@ -1,27 +1,28 @@
+@@ -1,12 +1,11 @@
  ---
  source: tui/src/startup_draft_tests.rs
-+assertion_line: 201
+-assertion_line: 285
  expression: "snapshots.join(\"\\n---\\n\")"
  ---
  resume lookup fallback:
  before:
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
-   Resuming session…
  
- › draft while loading
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
  
+   Pull up a prompt.
+@@ -17,7 +16,7 @@ before:
  
  after:
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
  
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
  
- › draft while loading
-@@ -30,24 +31,24 @@ after:
- ---
+   Pull up a prompt.
+@@ -30,7 +29,7 @@ after:
  fork lookup fallback:
  before:
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
-   Forking session…
  
- › draft while loading
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
  
+   Pull up a prompt.
+@@ -41,7 +40,7 @@ before:
  
  after:
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
  
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
  
- › draft while loading
-@@ -58,12 +59,12 @@ resume picker cancellation:
- before:
+   Pull up a prompt.
+@@ -56,7 +55,7 @@ before:
  hidden while picker owns input
  after:
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
  
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
  
- › Ask Codex to do anything
-@@ -74,12 +75,12 @@ fork picker cancellation:
- before:
+   Pull up a prompt.
+@@ -71,7 +70,7 @@ before:
  hidden while picker owns input
  after:
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
  
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
  
- › Ask Codex to do anything
+   Pull up a prompt.
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_full_frames.snap b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_full_frames.snap
-index 9195af7..fc41eba 100644
+index 13af775..2053276 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_full_frames.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_full_frames.snap
-@@ -1,14 +1,15 @@
+@@ -1,11 +1,10 @@
  ---
  source: tui/src/startup_draft_tests.rs
-+assertion_line: 117
+-assertion_line: 154
  expression: "snapshots.join(\"\\n---\\n\")"
  ---
  empty (48 columns):
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
  
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
  
- › Ask Codex to do anything
-@@ -16,12 +17,12 @@ empty (48 columns):
-   ? for shortcuts
+   Pull up a prompt.
+@@ -17,7 +16,7 @@ empty (48 columns):
  ---
  resuming (48 columns):
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
+ 
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
    Resuming session…
  
- › Ask Codex to do anything
-@@ -29,12 +30,12 @@ resuming (48 columns):
-   ? for shortcuts
+@@ -27,7 +26,7 @@ resuming (48 columns):
  ---
  forking (48 columns):
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
+ 
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
    Forking session…
  
- › draft while loading
-@@ -42,12 +43,12 @@ forking (48 columns):
- 
+@@ -37,7 +36,7 @@ forking (48 columns):
  ---
  multiline (48 columns):
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
  
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
  
- › first startup line
-@@ -57,7 +58,7 @@ multiline (48 columns):
+   Pull up a prompt.
+@@ -50,7 +49,7 @@ multiline (48 columns):
  ---
  narrow (18 columns):
- ╭────────────────╮
--│ >_ OpenAI Cod… │
-+│ >_ MeshAgent … │
- │                │
- │ model:     lo… │
- │ directory: …ng │
+ 
+-  >_ OpenAI Codex…
++  >_ MeshAgent Co…
+      loading
+ 
+   Pull up a promp…
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_onboarding_transition.snap b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_onboarding_transition.snap
-index 6284b07..ccb7eaa 100644
+index 681cfd8..ed17799 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_onboarding_transition.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_onboarding_transition.snap
-@@ -1,16 +1,17 @@
+@@ -1,13 +1,12 @@
  ---
  source: tui/src/startup_draft_tests.rs
-+assertion_line: 700
+-assertion_line: 802
  expression: frames
  ---
  before onboarding: hidden (0x0 viewport)
  ---
  after onboarding:
--╭───────────────────────────────────────╮
--│ >_ OpenAI Codex (v<VERSION>)              │
--│                                       │
--│ model:     loading   /model to change │
--│ directory: loading                    │
--╰───────────────────────────────────────╯
-+╭───────────────────────────────────────────╮
-+│ >_ MeshAgent Codex (v<VERSION>) │
-+│                                           │
-+│ model:     loading   /model to change     │
-+│ directory: loading                        │
-+╰───────────────────────────────────────────╯
  
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
  
- › Ask Codex to do anything
-diff --git a/codex-rs/tui/src/status/card.rs b/codex-rs/tui/src/status/card.rs
-index 93f959c..56005c3 100644
---- a/codex-rs/tui/src/status/card.rs
-+++ b/codex-rs/tui/src/status/card.rs
-@@ -727,7 +727,7 @@ impl HistoryCell for StatusHistoryCell {
-         let mut lines: Vec<Line<'static>> = Vec::new();
-         lines.push(Line::from(vec![
-             Span::from(format!("{}>_ ", FieldFormatter::INDENT)).dim(),
--            Span::from("OpenAI Codex").bold(),
-+            Span::from(crate::version::CODEX_PRODUCT_NAME).bold(),
-             Span::from(" ").dim(),
-             Span::from(format!("(v{CODEX_CLI_VERSION})")).dim(),
-         ]));
+   Pull up a prompt.
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__terminal_app_ssh_startup.snap b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__terminal_app_ssh_startup.snap
+index 2ec0e1e..d387f4c 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__terminal_app_ssh_startup.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__terminal_app_ssh_startup.snap
+@@ -1,11 +1,10 @@
+ ---
+ source: tui/src/startup_draft_tests.rs
+-assertion_line: 194
+ expression: "frames.join(\"\\n---\\n\").replace(crate::version::CODEX_CLI_VERSION, \"<VERSION>\")"
+ ---
+ terminal_app_over_ssh=false, owned=true
+ 
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
+ 
+   Pull up a prompt.
+@@ -23,7 +22,7 @@ terminal_app_over_ssh=false, owned=true
+ ---
+ terminal_app_over_ssh=true, owned=false
+ 
+-  >_ OpenAI Codex (v<VERSION>)
++  >_ MeshAgent Codex (v<VERSION>)
+      loading
+ 
+   Pull up a prompt.
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__update_prompt__tests__update_picker_selected_28x12.snap b/codex-rs/tui/src/snapshots/codex_tui__update_prompt__tests__update_picker_selected_28x12.snap
+index 53c8053..43c9254 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__update_prompt__tests__update_picker_selected_28x12.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__update_prompt__tests__update_picker_selected_28x12.snap
+@@ -3,11 +3,11 @@ source: tui/src/update_prompt.rs
+ expression: rendered
+ ---
+ 
+-  Update available · 0.0.0
+-  → 9.9.9
++  Update available ·
++  0.160.0-meshagent.1 →
++  9.9.9
+   Release notes:
+   https://github.com/opena
+-  i/codex/releases/latest
+ ↑
+ › 3. Skip until next version
+ 
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__update_prompt__tests__update_prompt_modal.snap b/codex-rs/tui/src/snapshots/codex_tui__update_prompt__tests__update_prompt_modal.snap
+index b547642..feb464b 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__update_prompt__tests__update_prompt_modal.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__update_prompt__tests__update_prompt_modal.snap
+@@ -3,7 +3,7 @@ source: tui/src/update_prompt.rs
+ expression: terminal.backend()
+ ---
+ 
+-  Update available · 0.0.0 → 9.9.9
++  Update available · 0.160.0-meshagent.1 → 9.9.9
+   Release notes: https://github.com/openai/codex/releases/latest
+ 
+ › 1. Update now (runs `npm install -g @openai/codex`)                           
+diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_not_required.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_not_required.snap
+index a00c3ae..4abcfc3 100644
+--- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_not_required.snap
++++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_not_required.snap
+@@ -4,7 +4,7 @@ expression: rendered
+ ---
+ /status
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Model:           gpt-5.6-sol (reasoning none, summaries auto)
+   Model provider:  server-ollama
+diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_required.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_required.snap
+index 6c856d5..91c4c74 100644
+--- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_required.snap
++++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_required.snap
+@@ -4,7 +4,7 @@ expression: rendered
+ ---
+ /status
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cached_limits_hide_credits_without_flag.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cached_limits_hide_credits_without_flag.snap
-index c7d89b1..1f0226b 100644
+index 4f55f6a..b833ba7 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cached_limits_hide_credits_without_flag.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cached_limits_hide_credits_without_flag.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 2150
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭─────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                   │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                  │
- │                                                                             │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date               │
- │ information on rate limits and credits                                      │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_credits_and_limits.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_credits_and_limits.snap
-index c1636b6..45d4e48 100644
+index 9d8fba7..41ebb63 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_credits_and_limits.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_credits_and_limits.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1888
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭─────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                   │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                  │
- │                                                                             │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date               │
- │ information on rate limits and credits                                      │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_enterprise_monthly_credit_limit.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_enterprise_monthly_credit_limit.snap
-index 765ad8d..8e6c2c4 100644
+index be84d82..5e71fe9 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_enterprise_monthly_credit_limit.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_enterprise_monthly_credit_limit.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1115
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭───────────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                         │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                        │
- │                                                                                   │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date                     │
- │ information on rate limits and credits                                            │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_forked_from.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_forked_from.snap
-index 1525751..3352b3d 100644
+index a321135..b5921af 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_forked_from.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_forked_from.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 985
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭─────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                   │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                  │
- │                                                                             │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date               │
- │ information on rate limits and credits                                      │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_monthly_limit.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_monthly_limit.snap
-index 7a4f58a..8704896 100644
+index f2cc2fb..3e06242 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_monthly_limit.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_monthly_limit.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1050
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭─────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                   │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                  │
- │                                                                             │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date               │
- │ information on rate limits and credits                                      │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_reasoning_details.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_reasoning_details.snap
-index 96b2ed1..6c16ca5 100644
+index 06866b5..1993c5b 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_reasoning_details.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_reasoning_details.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 353
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭───────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                 │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                │
- │                                                                           │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date             │
- │ information on rate limits and credits                                    │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
+diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_local_background_server.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_local_background_server.snap
+index 6cc0ff0..930feee 100644
+--- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_local_background_server.snap
++++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_local_background_server.snap
+@@ -4,7 +4,7 @@ expression: sanitized
+ ---
+ /status
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
+diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_remote_server.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_remote_server.snap
+index 8478305..a486e06 100644
+--- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_remote_server.snap
++++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_remote_server.snap
+@@ -4,7 +4,7 @@ expression: sanitized
+ ---
+ /status
+ 
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_active_user_defined_profile.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_active_user_defined_profile.snap
-index 4604b26..4a8b0b6 100644
+index 01134f2..92770b8 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_active_user_defined_profile.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_active_user_defined_profile.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 729
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭───────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                             │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                            │
- │                                                                       │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date         │
- │ information on rate limits and credits                                │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_auto_review_permissions.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_auto_review_permissions.snap
-index c739d55..81764f1 100644
+index 7173c99..aef0772 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_auto_review_permissions.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_auto_review_permissions.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 885
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭───────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                             │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                            │
- │                                                                       │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date         │
- │ information on rate limits and credits                                │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_chatgpt_plan_without_email.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_chatgpt_plan_without_email.snap
-index 0aba51f..ba62331 100644
+index e3b9bae..40951fc 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_chatgpt_plan_without_email.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_chatgpt_plan_without_email.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 414
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭──────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                               │
- │                                                                          │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date            │
- │ information on rate limits and credits                                   │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_missing_limits_message.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_missing_limits_message.snap
-index 533be27..cb70c4a 100644
+index 9a948fe..3d4a705 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_missing_limits_message.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_missing_limits_message.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1610
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭─────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                   │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                  │
- │                                                                             │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date               │
- │ information on rate limits and credits                                      │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_refreshing_limits_notice.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_refreshing_limits_notice.snap
-index 631982b..bfeb1f6 100644
+index 49ac38b..f556611 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_refreshing_limits_notice.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_refreshing_limits_notice.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1733
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭─────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                   │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                  │
- │                                                                             │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date               │
- │ information on rate limits and credits                                      │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_stale_limits_message.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_stale_limits_message.snap
-index 8facd56..eb3ad48 100644
+index 2474656..6104921 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_stale_limits_message.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_stale_limits_message.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 2077
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭─────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                   │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                  │
- │                                                                             │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date               │
- │ information on rate limits and credits                                      │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_unavailable_limits_message.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_unavailable_limits_message.snap
-index d46a483..7592e62 100644
+index 7d43405..f1a5307 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_unavailable_limits_message.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_shows_unavailable_limits_message.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1948
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭─────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                   │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                  │
- │                                                                             │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date               │
- │ information on rate limits and credits                                      │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_treats_refreshing_empty_limits_as_unavailable.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_treats_refreshing_empty_limits_as_unavailable.snap
-index d46a483..1b590e9 100644
+index 7d43405..f1a5307 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_treats_refreshing_empty_limits_as_unavailable.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_treats_refreshing_empty_limits_as_unavailable.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 2008
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭─────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                   │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                  │
- │                                                                             │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date               │
- │ information on rate limits and credits                                      │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_truncates_halfwidth_kana_in_narrow_terminal.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_truncates_halfwidth_kana_in_narrow_terminal.snap
-index 17442d7..e8b590b 100644
+index 23496e4..14c546a 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_truncates_halfwidth_kana_in_narrow_terminal.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_truncates_halfwidth_kana_in_narrow_terminal.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1562
- expression: sanitized
+@@ -4,7 +4,8 @@ expression: sanitized
  ---
  /status
  
- ╭────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)              │
-+│  >_ MeshAgent Codex (v0.153.4-meshagen │
- │                                        │
- │ Visit                                  │
- │ https://chatgpt.com/codex/settings/usa │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-
++  meshagent.1)
+ 
+   Visit
+   https://chatgpt.com/codex/settings/usage
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_truncates_in_narrow_terminal.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_truncates_in_narrow_terminal.snap
-index 6b28b53..89e9306 100644
+index ac59138..d84a762 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_truncates_in_narrow_terminal.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_truncates_in_narrow_terminal.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1526
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                          │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                         │
- │                                                                    │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date      │
- │ information on rate limits and credits                             │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_uses_default_reasoning_when_config_empty.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_uses_default_reasoning_when_config_empty.snap
-index 9683bee..a8fb2ad 100644
+index bf5bb86..fc49f23 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_uses_default_reasoning_when_config_empty.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_uses_default_reasoning_when_config_empty.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1666
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭─────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                   │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                  │
- │                                                                             │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date               │
- │ information on rate limits and credits                                      │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_uses_generic_limit_labels_for_unsupported_windows.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_uses_generic_limit_labels_for_unsupported_windows.snap
-index 6b6fad6..e3cbff0 100644
+index a1430ac..99d832f 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_uses_generic_limit_labels_for_unsupported_windows.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_uses_generic_limit_labels_for_unsupported_windows.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1196
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭──────────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                    │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                   │
- │                                                                              │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date                │
- │ information on rate limits and credits                                       │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_wraps_enterprise_monthly_credit_details_in_narrow_terminal.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_wraps_enterprise_monthly_credit_details_in_narrow_terminal.snap
-index cf6fa2c..4b8c0eb 100644
+index 950a3d4..228b68e 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_wraps_enterprise_monthly_credit_details_in_narrow_terminal.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_wraps_enterprise_monthly_credit_details_in_narrow_terminal.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1124
- expression: sanitized
+@@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
  
- ╭────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                  │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1) │
- │                                            │
- │ Visit                                      │
- │ https://chatgpt.com/codex/settings/usage   │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit
+   https://chatgpt.com/codex/settings/usage for
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__transcript_overlay_status_rate_limit_refresh.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__transcript_overlay_status_rate_limit_refresh.snap
-index e2f12c8..c0cfa9f 100644
+index f7871d8..c180675 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__transcript_overlay_status_rate_limit_refresh.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__transcript_overlay_status_rate_limit_refresh.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/status/tests.rs
-+assertion_line: 1813
- expression: "format!(\"before:\\n{before}\\n\\nafter:\\n{after}\")"
- ---
- before:
-@@ -7,7 +8,7 @@ before:
+@@ -6,7 +6,7 @@ before:
+ / T R A N S C R I P T / / / / / / / / / / / / / / / / / / / / / / / / / / / / /
  /status
  
- ╭──────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                               │
- │                                                                          │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date            │
- │ information on rate limits and credits                                   │
-@@ -39,7 +40,7 @@ after:
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
+@@ -38,7 +38,7 @@ after:
+ / T R A N S C R I P T / / / / / / / / / / / / / / / / / / / / / / / / / / / / /
  /status
  
- ╭───────────────────────────────────────────────────────────────────────────╮
--│  >_ OpenAI Codex (v0.0.0)                                                 │
-+│  >_ MeshAgent Codex (v0.153.4-meshagent.1)                                │
- │                                                                           │
- │ Visit https://chatgpt.com/codex/settings/usage for up-to-date             │
- │ information on rate limits and credits                                    │
+-  >_ OpenAI Codex (v0.0.0)
++  >_ MeshAgent Codex (v0.160.0-meshagent.1)
+ 
+   Visit https://chatgpt.com/codex/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/version.rs b/codex-rs/tui/src/version.rs
 index 8c8d108..0591dfe 100644
 --- a/codex-rs/tui/src/version.rs
@@ -2435,10 +2630,10 @@ index 8c8d108..0591dfe 100644
 +/// The product name shown by the MeshAgent Codex distribution.
 +pub const CODEX_PRODUCT_NAME: &str = "MeshAgent Codex";
 diff --git a/codex-rs/tui/tests/suite/focus_palette.rs b/codex-rs/tui/tests/suite/focus_palette.rs
-index 71a4cb5..fccb840 100644
+index fa47056..5336163 100644
 --- a/codex-rs/tui/tests/suite/focus_palette.rs
 +++ b/codex-rs/tui/tests/suite/focus_palette.rs
-@@ -124,7 +124,7 @@ impl PtyCodex {
+@@ -392,7 +392,7 @@ impl PtyCodex {
              self.read_output(Duration::from_millis(/*millis*/ 50))?;
              self.answer_startup_queries()?;
  

@@ -296,6 +296,55 @@ done
         self.assertIn("usage: build [--cli-only]", result.stderr)
         self.assertFalse((self.root / "cargo.log").exists())
 
+    def test_tests_cannot_change_shared_login_and_cleanup_after_failure(self):
+        real_home = self.root / "developer home"
+        settings = real_home / ".meshagent/settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text("saved login")
+        commands = self.root / "bin"
+        just = commands / "just"
+        just.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$HOME" "$USERPROFILE" "$MESHAGENT_CODEX_HOME" "$CARGO_HOME" "$RUSTUP_HOME" \\
+  "${OPENAI_API_KEY:+present}${CODEX_API_KEY:+present}${MESHAGENT_API_URL:+present}" > "$TEST_ENV_LOG"
+mkdir -p "$HOME/.meshagent"
+printf 'logged out' > "$HOME/.meshagent/settings.json"
+exit "${FAKE_TEST_EXIT:-0}"
+"""
+        )
+        just.chmod(0o755)
+        nextest = commands / "cargo-nextest"
+        nextest.write_text("#!/usr/bin/env bash\nexit 0\n")
+        nextest.chmod(0o755)
+        self.env.update(
+            HOME=str(real_home),
+            USERPROFILE=str(real_home),
+            TMPDIR=str(self.root),
+            CARGO_HOME=str(self.root / "cargo cache"),
+            RUSTUP_HOME=str(self.root / "rustup cache"),
+            OPENAI_API_KEY="fixture-key",
+            CODEX_API_KEY="fixture-key",
+            MESHAGENT_API_URL="https://api.example.invalid",
+            TEST_ENV_LOG=str(self.root / "test-env.log"),
+        )
+        for exit_code in (0, 42):
+            with self.subTest(exit_code=exit_code):
+                self.env["FAKE_TEST_EXIT"] = str(exit_code)
+                result = self.run_helper("test", "-p", "codex-login")
+                self.assertEqual(result.returncode, exit_code, result.stderr)
+                self.assertEqual(settings.read_text(), "saved login")
+                home, profile, codex_home, cargo_home, rustup_home, credentials = (
+                    (self.root / "test-env.log").read_text().splitlines()
+                )
+                self.assertEqual(home, profile)
+                self.assertNotEqual(Path(home), real_home)
+                self.assertEqual(Path(cargo_home), Path(self.env["CARGO_HOME"]))
+                self.assertEqual(Path(rustup_home), Path(self.env["RUSTUP_HOME"]))
+                self.assertEqual(credentials, "")
+                self.assertFalse(Path(home).exists())
+                self.assertFalse(Path(codex_home).exists())
+
 
 class PackageManifestTests(unittest.TestCase):
     def setUp(self):

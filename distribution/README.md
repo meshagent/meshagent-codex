@@ -17,9 +17,9 @@ repository. Do not copy a materialized OpenAI Codex checkout into this tree.
 
 ## Current distribution
 
-- Upstream: `openai/codex` tag `rust-v0.153.4`
-- Upstream commit: `3d2ee51ca2d5db578f328aa75e20aa22c0197c9a`
-- Distribution version: `0.153.4-meshagent.1`
+- Upstream: `openai/codex` tag `rust-v0.160.0`
+- Upstream commit: `a956835d020762cb2b570053af06f643a11c0ecc`
+- Distribution version: `0.160.0-meshagent.1`
 - Default state directory: `~/.meshagent/codex`
 - Installed command name: `codex`
 
@@ -34,8 +34,9 @@ Daemon resources are namespaced inside that root:
 - managed executables: `packages/standalone/current/codex` and
   `packages/standalone/current/codex-code-mode-host`.
 
-Automatic use of OpenAI's standalone updater is disabled. MeshAgent packaging
-owns updates to the managed executable.
+OpenAI's startup update checks, standalone updater, `codex update`, and daemon
+package updates are disabled. MeshAgent packaging owns updates to the managed
+executable.
 
 ## Authentication and projects
 

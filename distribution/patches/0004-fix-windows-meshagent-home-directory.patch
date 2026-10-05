@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: MeshAgent Codex Build <codex-build@meshagent.com>
-Date: Tue, 15 Sep 2026 11:26:36 -0700
-Subject: [PATCH] Resolve MeshAgent authentication home directory on Windows
+From: MeshAgent <engineering@meshagent.com>
+Date: Mon, 5 Oct 2026 10:32:12 -0700
+Subject: [PATCH] Fix Windows MeshAgent home directory
 
 ---
  codex-rs/login/src/meshagent/mod.rs | 5 ++---

@@ -1,67 +1,158 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: MeshAgent Codex Build <codex-build@meshagent.com>
-Date: Wed, 2 Sep 2026 14:09:04 -0700
-Subject: [PATCH] Isolate MeshAgent runtime without renaming Codex commands
+From: MeshAgent <engineering@meshagent.com>
+Date: Mon, 5 Oct 2026 10:32:11 -0700
+Subject: [PATCH] Isolate MeshAgent runtime and daemon
 
 ---
- codex-rs/app-server-daemon/README.md          | 63 ++++++++-----------
- codex-rs/app-server-daemon/src/lib.rs         | 20 +++---
- codex-rs/app-server-daemon/src/update_loop.rs |  7 ++-
- .../app-server-transport/src/transport/mod.rs |  8 +--
- .../src/transport/unix_socket_tests.rs        | 16 ++---
- codex-rs/cli/src/bin/logs_client.rs           |  4 +-
- codex-rs/cli/src/cloud_config.rs              |  2 +-
- codex-rs/cli/src/doctor.rs                    | 13 ++--
- codex-rs/cli/src/doctor/background.rs         |  2 +-
- codex-rs/cli/src/doctor/disk.rs               |  7 ++-
- codex-rs/cli/src/doctor/disk_tests.rs         | 10 +--
- codex-rs/cli/src/doctor/output/detail.rs      | 11 +++-
- codex-rs/cli/src/lib.rs                       |  6 +-
- codex-rs/cli/src/main.rs                      |  2 +-
- codex-rs/cli/src/mcp_cmd.rs                   |  4 +-
- codex-rs/cli/src/plugin_cmd.rs                |  2 +-
- codex-rs/cli/tests/app_server.rs              |  2 +-
- codex-rs/cli/tests/cloud_auth.rs              |  2 +-
- codex-rs/cli/tests/cloud_config.rs            |  2 +-
- codex-rs/cli/tests/debug_clear_memories.rs    |  2 +-
- codex-rs/cli/tests/debug_models.rs            |  2 +-
- codex-rs/cli/tests/delete.rs                  |  2 +-
- .../cli/tests/doctor_enterprise_network.rs    |  4 +-
- codex-rs/cli/tests/exec_server.rs             |  8 +--
- codex-rs/cli/tests/execpolicy.rs              |  4 +-
- codex-rs/cli/tests/features.rs                |  2 +-
- codex-rs/cli/tests/login.rs                   |  2 +-
- codex-rs/cli/tests/marketplace_add.rs         |  2 +-
- codex-rs/cli/tests/marketplace_remove.rs      |  2 +-
- codex-rs/cli/tests/marketplace_upgrade.rs     |  2 +-
- codex-rs/cli/tests/mcp_add_remove.rs          |  2 +-
- codex-rs/cli/tests/mcp_list.rs                |  2 +-
- codex-rs/cli/tests/plugin_cli.rs              |  4 +-
- codex-rs/cli/tests/queue.rs                   |  6 +-
- codex-rs/cli/tests/sandbox_cloud_config.rs    |  2 +-
- codex-rs/cli/tests/sandbox_network_proxy.rs   |  4 +-
- codex-rs/cli/tests/update.rs                  |  2 +-
- .../tests/suite/mcp_oauth_refresh_tests.rs    |  2 +-
- codex-rs/test-binary-support/lib.rs           |  8 +--
- codex-rs/tui/src/lib.rs                       |  5 +-
- codex-rs/tui/src/render/highlight.rs          |  2 +-
- codex-rs/tui/src/startup_draft_tests.rs       |  5 +-
- codex-rs/tui/src/startup_preflight_tests.rs   | 14 ++---
- codex-rs/tui/tests/suite/focus_palette.rs     |  2 +-
- codex-rs/tui/tests/suite/resize_reflow.rs     | 20 ++++--
- codex-rs/utils/home-dir/src/lib.rs            | 48 +++++++-------
- .../src/bin/setup_main/win.rs                 |  2 +-
- 47 files changed, 178 insertions(+), 167 deletions(-)
+ codex-rs/Cargo.lock                           |   1 +
+ codex-rs/app-server-daemon/README.md          | 162 ++++--------------
+ .../src/backend/pid_tests.rs                  |   2 +-
+ codex-rs/app-server-daemon/src/lib.rs         |  68 ++------
+ .../app-server-daemon/src/managed_install.rs  |   9 +-
+ .../src/managed_install_path_tests.rs         |   4 +-
+ .../src/meshagent_update_tests.rs             |  95 ++++++++++
+ .../app-server-daemon/src/prepare_install.rs  |  21 +--
+ .../src/prepare_install_tests.rs              |   8 +-
+ .../app-server-daemon/src/settings_tests.rs   |   2 +-
+ codex-rs/app-server-daemon/src/update_loop.rs |  10 ++
+ .../src/update_loop_tests.rs                  |  10 +-
+ .../app-server-transport/src/transport/mod.rs |   8 +-
+ .../src/transport/unix_socket_tests.rs        |  16 +-
+ .../tests/common/test_app_server.rs           |   2 +-
+ codex-rs/cli/src/bin/logs_client.rs           |   4 +-
+ codex-rs/cli/src/cloud_config.rs              |   2 +-
+ codex-rs/cli/src/daemon_update_tests.rs       |  30 ++--
+ codex-rs/cli/src/doctor.rs                    |  13 +-
+ codex-rs/cli/src/doctor/background.rs         |   2 +-
+ codex-rs/cli/src/doctor/disk.rs               |   7 +-
+ codex-rs/cli/src/doctor/disk_tests.rs         |  10 +-
+ codex-rs/cli/src/doctor/output/detail.rs      |  11 +-
+ codex-rs/cli/src/lib.rs                       |   6 +-
+ codex-rs/cli/src/main.rs                      |  12 +-
+ codex-rs/cli/src/mcp_cmd.rs                   |   4 +-
+ codex-rs/cli/src/plugin_cmd.rs                |   2 +-
+ codex-rs/cli/tests/app_server.rs              |   2 +-
+ codex-rs/cli/tests/cloud_auth.rs              |   2 +-
+ codex-rs/cli/tests/cloud_config.rs            |   2 +-
+ codex-rs/cli/tests/debug_clear_memories.rs    |   2 +-
+ codex-rs/cli/tests/debug_models.rs            |   2 +-
+ codex-rs/cli/tests/delete.rs                  |   2 +-
+ .../cli/tests/doctor_enterprise_network.rs    |   6 +-
+ codex-rs/cli/tests/exec_server.rs             |   8 +-
+ codex-rs/cli/tests/execpolicy.rs              |   4 +-
+ codex-rs/cli/tests/features.rs                |   2 +-
+ codex-rs/cli/tests/login.rs                   |   2 +-
+ codex-rs/cli/tests/marketplace_add.rs         |   2 +-
+ codex-rs/cli/tests/marketplace_remove.rs      |   2 +-
+ codex-rs/cli/tests/marketplace_upgrade.rs     |   2 +-
+ codex-rs/cli/tests/mcp_add_remove.rs          |   2 +-
+ codex-rs/cli/tests/mcp_list.rs                |   2 +-
+ codex-rs/cli/tests/plugin_cli.rs              |   4 +-
+ codex-rs/cli/tests/queue.rs                   |   6 +-
+ codex-rs/cli/tests/sandbox_cloud_config.rs    |   2 +-
+ codex-rs/cli/tests/sandbox_network_proxy.rs   |   4 +-
+ codex-rs/cli/tests/update.rs                  |   7 +-
+ .../tests/suite/mcp_oauth_refresh_tests.rs    |   2 +-
+ codex-rs/test-binary-support/lib.rs           |   8 +-
+ codex-rs/tui/src/app/daemon_menu.rs           |   2 +-
+ codex-rs/tui/src/app/daemon_menu_tests.rs     |  26 +++
+ ...n_menu__tests__enterprise_daemon_menu.snap |  13 ++
+ codex-rs/tui/src/lib.rs                       |   5 +-
+ codex-rs/tui/src/render/highlight.rs          |  14 +-
+ codex-rs/tui/src/startup_draft_tests.rs       |   5 +-
+ codex-rs/tui/src/startup_preflight_tests.rs   |  14 +-
+ codex-rs/tui/tests/suite/focus_palette.rs     |   4 +-
+ codex-rs/tui/tests/suite/resize_reflow.rs     |  20 ++-
+ codex-rs/utils/home-dir/src/lib.rs            |  48 +++---
+ .../src/setup_provisioning.rs                 |   2 +-
+ 61 files changed, 402 insertions(+), 349 deletions(-)
+ create mode 100644 codex-rs/app-server-daemon/src/meshagent_update_tests.rs
+ create mode 100644 codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__enterprise_daemon_menu.snap
 
+diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
+index cfbe42d..76931d1 100644
+--- a/codex-rs/Cargo.lock
++++ b/codex-rs/Cargo.lock
+@@ -5600,6 +5600,7 @@ dependencies = [
+  "tempfile",
+  "tokio",
+  "tokio-tungstenite",
++ "toml 0.9.11+spec-1.1.0",
+  "tracing",
+  "tracing-opentelemetry",
+  "tracing-subscriber",
 diff --git a/codex-rs/app-server-daemon/README.md b/codex-rs/app-server-daemon/README.md
-index ac512a8..deaad71 100644
+index 74721c8..38f673b 100644
 --- a/codex-rs/app-server-daemon/README.md
 +++ b/codex-rs/app-server-daemon/README.md
-@@ -33,53 +33,39 @@ running app-server version when applicable.
+@@ -10,29 +10,15 @@ machines that should expose app-server with `remote_control` enabled.
  
+ ## Platform support
+ 
+-The daemon supports Linux, macOS, and Windows using platform-specific process
+-and file-locking primitives. Windows startup requires a non-elevated terminal
+-whose host permits detached child processes.
+-
+-Windows automatic attachment requires the canonical socket address to fit the
+-108-byte AF_UNIX limit (including its terminator). A short junction alias whose
+-resolved address exceeds that limit falls back to the embedded server. Use a
+-shorter `CODEX_HOME` to share the daemon; discovery does not trust a mutable alias.
+-
+-Shared clients use the environment inherited when the daemon started. Opening a
+-new terminal or clearing variables there does not clear the running daemon's
+-environment; per-client environment isolation is not provided.
+-An invocation that sets `CODEX_EXEC_SERVER_URL` skips implicit daemon attachment
+-so its executor selection is preserved. If an implicitly discovered daemon cannot
+-initialize the connection, the TUI starts an embedded server instead. Explicit
+-`--remote` endpoints remain authoritative and report connection failures.
++The current daemon implementation is Unix-only. It uses pidfile-backed
++daemonization plus Unix process and file-locking primitives, and does not yet
++support Windows lifecycle management.
+ 
+ ## Commands
+ 
+ ```sh
+ codex app-server daemon start
+ codex app-server daemon restart
+-codex app-server daemon update
+ codex app-server daemon enable-remote-control
+ codex app-server daemon disable-remote-control
+ codex app-server daemon stop
+@@ -45,116 +31,42 @@ should parse that JSON rather than relying on human-readable text. Lifecycle
+ responses report the resolved backend, socket path, local CLI version, and
+ running app-server version when applicable.
+ 
+-Eligible managed daemons check for updates after five minutes, then hourly by
+-default. Edit `CODEX_HOME/app-server-daemon/settings.json` to change this:
+-
+-```json
+-{"remoteControlEnabled": false,
+- "shutdownGraceSeconds": 60,
+- "updater": {"autoUpdateEnabled": false, "updateIntervalMinutes": 120}}
+-```
+-
+-Positive minute intervals have no configured cap. `daemon restart` applies the
+-enabled state; the next updater wait reads a new interval. The preference does
+-not affect an explicit `codex update` command or `daemon update`.
+-
+-`daemon update` selects the latest stable release, even with automatic updates
+-disabled. It also returns pinned or local managed packages to production update
+-eligibility, preserving the automatic-update preference. Legacy installations
+-migrate to the dedicated root once the published installer and release support
+-migration. JSON reports `updated`, `noUpdate`, or `unsupported`, with installed
+-and running versions. A running daemon restarts, so active or queued work may be
+-interrupted; a stopped daemon stays stopped. Installer errors return nonzero.
+-The updater uses saved network settings; CLI `-c` overrides do not reach it.
+-
+-For all managed app-server shutdowns, including explicit stop and restart and
+-updater-triggered restarts, `shutdownGraceSeconds` defaults to 60 and accepts
+-an integer from 0 through 300. Zero forces shutdown immediately after requesting
+-a graceful exit; the five-minute maximum bounds the wait even if a turn is still
+-running.
+-
  ## Bootstrap flow
  
--For a new remote machine:
+-For a new Linux or macOS machine:
 +Install the managed distribution binary, then bootstrap it:
  
  ```sh
@@ -71,42 +162,78 @@ index ac512a8..deaad71 100644
 +$HOME/.meshagent/codex/packages/standalone/current/codex app-server daemon bootstrap --remote-control
  ```
  
- `bootstrap` requires the standalone managed install. It records the daemon
--settings under `CODEX_HOME/app-server-daemon/`, starts app-server as a
--pidfile-backed detached process, and launches a detached updater loop.
+-On Windows, use a non-elevated PowerShell terminal whose host allows breakaway:
+-
+-```powershell
+-irm https://chatgpt.com/codex/install.ps1 | iex
+-$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
+-& "$codexHome\packages\standalone\current\bin\codex.exe" app-server daemon bootstrap --remote-control
+-```
+-
+-`bootstrap` can use any complete CLI package. If no daemon package is installed,
+-it copies the invoking package into `CODEX_HOME/packages/app-server-daemon` and
+-prints an installation message without asking for confirmation. Existing daemon
+-packages are reused, including legacy installations; a broken selection is not
+-silently replaced. A bare executable cannot supply a new installation.
+-
+-It records the daemon settings under `CODEX_HOME/app-server-daemon/`, starts app-server as a
+-pidfile-backed detached process. It launches a detached updater loop when
+-automatic updates are enabled, the installer selected the stable `latest`
+-channel, and the managed binary supports the updater command.
++`bootstrap` requires the standalone managed install. It records the daemon
 +settings under `MESHAGENT_CODEX_HOME/codex-app-server-daemon/` and starts
 +app-server as a pidfile-backed detached process.
  
  ## Installation and update cases
  
--The daemon assumes Codex is installed through `install.sh` and always launches
--the standalone managed binary under `CODEX_HOME`.
+-New daemons use `CODEX_HOME/packages/app-server-daemon/current/bin/codex`
+-(`codex.exe` on Windows). The package contains the executable and its helpers.
+-Daemon-only installer updates leave the user's CLI command and shell setup alone.
 -
--| Situation | What starts | Does this daemon fetch new binaries? | Does a running app-server eventually move to a newer binary on its own? |
--| --- | --- | --- | --- |
--| `install.sh` has run, but only `start` is used | `start` uses `CODEX_HOME/packages/standalone/current/codex` | No | No. The managed path is used when starting or restarting, but no updater is installed. |
--| `install.sh` has run, then `bootstrap` is used | The pidfile backend uses `CODEX_HOME/packages/standalone/current/codex` | Yes. Bootstrap launches a detached updater loop that runs `install.sh` hourly. | Yes, while that updater process is alive and app-server is already running. After a successful fetch, the updater restarts app-server with the refreshed binary and only then replaces its own process image. |
--| Some other tool updates the managed binary path | The next fresh start or restart uses the updated file at that path | Only if `bootstrap` is active, because the updater still runs `install.sh` on its normal cadence. | Without `bootstrap`, no. With `bootstrap`, the next successful updater pass compares the managed binary contents after `install.sh` runs; if app-server is running and they differ from the updater's current image, it refreshes app-server first and then itself. |
+-Previously launched legacy daemons retain `CODEX_HOME/packages/standalone/current`,
+-including its flat binary layout when present. Starts and scheduled updates keep
+-using that location. An explicit production update prepares and validates a
+-compatible dedicated package before stopping the legacy updater and daemon,
+-selecting the new package, and restarting only a previously running daemon.
+-The old CLI package files and selection remain unchanged.
 +The daemon always launches
 +`MESHAGENT_CODEX_HOME/packages/standalone/current/codex`. The MeshAgent
-+distribution does not run OpenAI's standalone installer or updater. Install a
++distribution does not run OpenAI's standalone installer or updater, including
++manual `daemon update` and CLI package replacement. Install a
 +new managed binary through MeshAgent distribution tooling, then run `restart`
 +to move a running app-server to that version.
  
- ### Standalone installs
+-| Situation | What starts | Does this daemon fetch new binaries? | Does a running app-server eventually move to a newer binary on its own? |
+-| --- | --- | --- | --- |
+-| Latest-channel installer has run; `start` or `bootstrap` is used with automatic updates enabled | Managed binary and detached updater when supported | When supported, the platform's installer runs on the configured cadence. | When supported, the running server restarts with the new binary before the updater replaces itself. |
+-| Installer selected an explicit release; `bootstrap` is used | Managed binary only | No; the selected release stays pinned. | No; an explicit restart uses the selected binary. |
+-| Another tool updates the managed binary | A fresh start or explicit restart uses it; a running server is reused. | Yes, when a latest-channel updater is running, on the configured cadence. | An updater that was running through the change compares binary contents on its next successful installer pass and refreshes the server first. |
++### Standalone installs
  
--For installs created by `install.sh`:
+-### Managed packages
 +For installs created by the MeshAgent distribution tooling:
  
- - lifecycle commands always use the standalone managed binary path
+-For dedicated and retained legacy daemon installations:
+-
+-- lifecycle commands use the selected daemon package, regardless of the invoking
+-  CLI version; they do not implicitly replace an existing package
++- lifecycle commands always use the standalone managed binary path
  - `bootstrap` is supported
--- `bootstrap` starts a detached pid-backed updater loop that fetches via
--  `install.sh`
+-- managed `start`, `restart`, and `bootstrap` ensure a single detached pid-backed
+-  updater loop only when automatic updates are enabled for a stable latest-channel
+-  release whose managed binary supports the updater command
+-- the installer records the latest-channel selection alongside `current`;
+-  selecting an explicit release clears it, even if that version is currently
+-  latest. The updater checks the selection again while holding the install lock
+-  so an in-flight update cannot override a new pin
+-- installs made before the installer recorded channel selections need one new
+-  `latest` installation to opt into automatic updates; until then the daemon
+-  continues to serve app-server without updating the selected release
 -- after a successful refresh, if app-server is running and the managed binary
 -  contents changed, the updater restarts app-server with that binary first and
 -  only then replaces its own process image
--- the updater loop is not reboot-persistent; it must be started again by
--  rerunning `bootstrap` after a reboot
+-- the updater loop is not reboot-persistent; a managed start after reboot
+-  starts it again
 +- `bootstrap` starts only the detached pid-backed app-server
 +- automatic standalone updates are disabled
  
@@ -115,31 +242,39 @@ index ac512a8..deaad71 100644
 -This daemon does not watch arbitrary executable files for replacement. If some
 -other tool updates the managed binary path:
 -
--- without `bootstrap`, a currently running app-server remains on the old
--  executable image until an explicit `restart`
--- with `bootstrap`, the detached updater loop notices the changed managed
--  binary on its next successful scheduled pass after running `install.sh`; if
+-- an updater that was already running notices a changed managed
+-  binary on its next successful scheduled installer pass; if
 -  app-server is running, it refreshes app-server first and then refreshes itself
 -  once that replacement starts successfully
+-- if the updater was absent during a same-version binary replacement, a later
+-  managed start recovers it but cannot infer the running server's previous
+-  executable identity; use `codex app-server daemon restart` to refresh the server
 +This daemon does not watch the managed executable for replacement. After
 +distribution tooling updates that file, a currently running app-server remains
 +on the old executable image until an explicit `restart`.
  
  ## Lifecycle semantics
  
-@@ -92,22 +78,23 @@ JSON-RPC initialize handshake on the Unix control socket.
+@@ -167,26 +79,24 @@ JSON-RPC initialize handshake on the Unix control socket.
  for future starts. If a managed app-server is already running, they restart it
  so the new setting takes effect immediately.
  
--Top-level `codex remote-control` bootstraps with `--remote-control` when the
--updater loop is not running. Otherwise it enables remote control and starts the
--daemon normally.
-+Top-level `codex remote-control` bootstraps with `--remote-control`
-+when the managed daemon is not running. Otherwise it enables remote control and
-+starts the daemon normally.
+-Top-level `codex remote-control start` enables and persists remote control for
+-the managed daemon, overriding a saved disabled value. It starts or bootstraps
+-the daemon as needed. Plain `codex remote-control` runs a separate foreground
+-server and does not change daemon settings; `codex remote-control stop` stops
+-the managed daemon without clearing its saved remote-control preference.
+-`daemon start` and `daemon restart` use that saved preference. `daemon bootstrap`
+-sets it according to `--remote-control` (disabled when omitted).
++Top-level `codex remote-control start` enables remote control and starts or
++bootstraps the managed daemon. Plain `codex remote-control` runs a separate
++foreground server. `codex remote-control stop` stops the managed daemon while
++preserving its saved remote-control preference.
  
- `stop` sends a graceful termination request first, then sends a second
- termination signal after the grace window if the process is still alive.
+-`stop` sends a graceful termination request first, then force-terminates the
+-process after the configured grace window if it is still alive.
++`stop` requests graceful termination, then forces termination after
++`shutdownGraceSeconds` (60 seconds by default, configurable from 0 through 300).
  
 -All mutating lifecycle commands are serialized per `CODEX_HOME`, so a concurrent
 -`start`, `restart`, `enable-remote-control`, `disable-remote-control`, `stop`,
@@ -155,24 +290,50 @@ index ac512a8..deaad71 100644
 +The daemon stores its local state under
 +`MESHAGENT_CODEX_HOME/codex-app-server-daemon/`:
  
- - `settings.json` for persisted launch settings
+-- `settings.json` for remote-control launch settings and updater preferences
++- `settings.json` for persisted launch settings
  - `app-server.pid` for the app-server process record
 -- `app-server-updater.pid` for the pid-backed standalone updater loop
  - `daemon.lock` for daemon-wide lifecycle serialization
+diff --git a/codex-rs/app-server-daemon/src/backend/pid_tests.rs b/codex-rs/app-server-daemon/src/backend/pid_tests.rs
+index 19d262c..8dbb8b7 100644
+--- a/codex-rs/app-server-daemon/src/backend/pid_tests.rs
++++ b/codex-rs/app-server-daemon/src/backend/pid_tests.rs
+@@ -160,7 +160,7 @@ async fn start_retries_stale_empty_pid_file_under_its_own_lock() {
+ async fn legacy_launch_clears_recovery_best_effort() {
+     for snapshot_is_directory in [false, true] {
+         let home = TempDir::new().expect("temp dir");
+-        let state_dir = home.path().join("app-server-daemon");
++        let state_dir = home.path().join("codex-app-server-daemon");
+         std::fs::create_dir_all(&state_dir).expect("state dir");
+         let recovery_file = codex_app_server_transport::daemon_recovery_file_path(home.path());
+         if snapshot_is_directory {
 diff --git a/codex-rs/app-server-daemon/src/lib.rs b/codex-rs/app-server-daemon/src/lib.rs
-index c909788..2c03496 100644
+index 15ba769..5e11144 100644
 --- a/codex-rs/app-server-daemon/src/lib.rs
 +++ b/codex-rs/app-server-daemon/src/lib.rs
-@@ -32,7 +32,7 @@ const PID_FILE_NAME: &str = "app-server.pid";
- const UPDATE_PID_FILE_NAME: &str = "app-server-updater.pid";
+@@ -34,9 +34,9 @@ use codex_app_server_protocol::RemoteControlConnectionStatus;
+ use codex_app_server_protocol::RemoteControlPairingStartResponse;
+ use codex_app_server_transport::app_server_control_socket_path;
+ use codex_utils_home_dir::find_codex_home;
+-use managed_install::managed_codex_bin;
+ #[cfg(any(unix, windows))]
+ use managed_install::managed_codex_version;
++use managed_install::meshagent_managed_codex_bin as managed_codex_bin;
+ use serde::Serialize;
+ use settings::DaemonSettings;
+ use settings::MAX_SHUTDOWN_GRACE_SECONDS;
+@@ -53,7 +53,8 @@ const DAEMON_PID_FILE_NAME: &str = "daemon.pid";
+ const DAEMON_UPDATE_PID_FILE_NAME: &str = "daemon-updater.pid";
  const OPERATION_LOCK_FILE_NAME: &str = "daemon.lock";
  const SETTINGS_FILE_NAME: &str = "settings.json";
 -const STATE_DIR_NAME: &str = "app-server-daemon";
 +const STATE_DIR_NAME: &str = "codex-app-server-daemon";
++const DISTRIBUTION_UPDATES_ENABLED: bool = false;
  
  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
  pub enum LifecycleCommand {
-@@ -261,7 +261,7 @@ struct Daemon {
+@@ -319,7 +320,7 @@ struct Daemon {
  
  impl Daemon {
      fn from_environment() -> Result<Self> {
@@ -181,81 +342,463 @@ index c909788..2c03496 100644
          let socket_path = app_server_control_socket_path(codex_home.as_path())?
              .as_path()
              .to_path_buf();
-@@ -609,14 +609,12 @@ impl Daemon {
-         if updater.is_starting_or_running().await? {
-             updater.stop().await?;
-         }
--        updater.start().await?;
--
-         let info = self.wait_until_ready().await?;
-         let managed_codex_version = self.managed_codex_version_best_effort().await;
-         Ok(BootstrapOutput {
-             status: BootstrapStatus::Bootstrapped,
-             backend: BackendKind::Pid,
--            auto_update_enabled: true,
-+            auto_update_enabled: false,
-             remote_control_enabled: settings.remote_control_enabled,
-             managed_codex_path: self.managed_codex_bin.clone(),
-             managed_codex_version,
-@@ -660,8 +658,7 @@ impl Daemon {
+@@ -867,42 +868,10 @@ impl Daemon {
+     }
+ 
+     async fn ensure_managed_updater(&self, settings: &DaemonSettings) -> Result<bool> {
+-        let updater = backend::pid_update_loop_backend(self.backend_paths(settings));
+-        if !settings.auto_update_enabled {
+-            updater.stop().await?;
+-            return Ok(false);
+-        }
+-        if !self.is_stable_standalone_release()? {
+-            // An installer publishes current and the latest marker separately.
+-            // Keep its updater alive while that publication may be in progress.
+-            if !self.has_latest_selection_marker() {
+-                updater.stop().await?;
+-            }
+-            return Ok(false);
+-        }
+-        let Ok(codex_bin) =
+-            managed_install::resolved_managed_codex_bin(&self.managed_codex_bin).await
+-        else {
+-            if !self.has_latest_selection_marker() {
+-                updater.stop().await?;
+-            }
+-            return Ok(false);
+-        };
+-        if !managed_install::supports_daemon_update_loop(&codex_bin).await
+-            || !self.is_stable_standalone_release()?
+-            || !managed_install::resolved_managed_codex_bin(&self.managed_codex_bin)
+-                .await
+-                .is_ok_and(|selected| selected == codex_bin)
+-        {
+-            if !self.has_latest_selection_marker() {
+-                updater.stop().await?;
+-            }
+-            return Ok(false);
+-        }
+-        backend::pid_update_loop_backend(self.backend_paths_with_bin(settings, &codex_bin))
+-            .start()
++        backend::pid_update_loop_backend(self.backend_paths(settings))
++            .stop()
+             .await?;
+-        Ok(true)
++        Ok(false)
+     }
+ 
+     fn is_stable_standalone_release(&self) -> Result<bool> {
+@@ -924,7 +893,7 @@ impl Daemon {
+             .parent()
+             .and_then(Path::parent)
+             .context("daemon settings path has no Codex home")?;
+-        Ok(managed_install::managed_codex_bin(home))
++        Ok(managed_codex_bin(home))
+     }
+ 
+     fn has_latest_selection_marker(&self) -> bool {
+@@ -939,14 +908,7 @@ impl Daemon {
      }
  
      async fn is_bootstrapped(&self, settings: &DaemonSettings) -> Result<bool> {
+-        if !settings.auto_update_enabled
+-            || !self.is_stable_standalone_release()?
+-            || !managed_install::supports_daemon_update_loop(&self.managed_codex_bin).await
+-        {
+-            return Ok(self.running_backend_instance(settings).await?.is_some());
+-        }
 -        let updater = backend::pid_update_loop_backend(self.backend_paths(settings));
 -        updater.is_starting_or_running().await
 +        Ok(self.running_backend_instance(settings).await?.is_some())
      }
  
      fn ensure_managed_codex_bin(&self) -> Result<()> {
-@@ -671,11 +668,10 @@ impl Daemon {
+@@ -958,7 +920,7 @@ impl Daemon {
  
          let managed_codex_path = self.managed_codex_bin.display();
          Err(anyhow!(
--            "managed standalone Codex install not found at {managed_codex_path}\n\n\
--             This command requires the standalone install managed by the Codex installer, because \
--             the daemon starts and updates app-server from that fixed path.\n\n\
--             Install it with:\n  curl -fsSL https://chatgpt.com/codex/install.sh | sh\n\n\
--             Then rerun the command you just tried."
-+            "managed MeshAgent Codex install not found at {managed_codex_path}\n\n\
-+             The daemon starts app-server from the fixed MeshAgent distribution path.\n\n\
-+             Install it with the MeshAgent Codex distribution helper, then rerun the command you \
-+             just tried."
+-            "daemon executable not found at {managed_codex_path}; repair the existing installation, or run `codex app-server daemon start` to install a missing daemon"
++            "managed MeshAgent Codex install not found at {managed_codex_path}; install it with the MeshAgent Codex distribution helper, then rerun the command"
          ))
      }
  
-diff --git a/codex-rs/app-server-daemon/src/update_loop.rs b/codex-rs/app-server-daemon/src/update_loop.rs
-index 76fd948..f28a341 100644
---- a/codex-rs/app-server-daemon/src/update_loop.rs
-+++ b/codex-rs/app-server-daemon/src/update_loop.rs
-@@ -8,7 +8,6 @@ use std::time::Duration;
- #[cfg(unix)]
- use anyhow::Context;
- use anyhow::Result;
--#[cfg(not(unix))]
- use anyhow::bail;
- #[cfg(unix)]
- use codex_http_client::ClientRouteClass;
-@@ -55,9 +54,15 @@ const RESTART_RETRY_INTERVAL: Duration = Duration::from_millis(50);
- const UPDATE_INTERVAL: Duration = Duration::from_secs(60 * 60);
- #[cfg(unix)]
- const INSTALL_URL: &str = "https://chatgpt.com/codex/install.sh";
-+const AUTOMATIC_UPDATES_ENABLED: bool = false;
+@@ -1264,7 +1226,7 @@ mod tests {
+     #[tokio::test]
+     async fn waiting_lifecycle_command_uses_migrated_installation() {
+         let home = TempDir::new().expect("home");
+-        let state = home.path().join("app-server-daemon");
++        let state = home.path().join(super::STATE_DIR_NAME);
+         let legacy = home.path().join("packages/standalone/current");
+         std::fs::create_dir_all(&legacy).expect("legacy selection");
+         let daemon = Daemon {
+@@ -1323,7 +1285,7 @@ mod tests {
+     #[tokio::test]
+     async fn stop_and_fresh_start_discard_pending_thread_restore() {
+         let home = TempDir::new().expect("home");
+-        let state = home.path().join("app-server-daemon");
++        let state = home.path().join(super::STATE_DIR_NAME);
+         codex_uds::prepare_private_socket_directory(&state)
+             .await
+             .expect("private state directory");
+@@ -1381,7 +1343,7 @@ mod tests {
+             .expect("executable local bin");
+         std::os::unix::fs::symlink("local-main", standalone.join("current"))
+             .expect("current local build");
+-        let state = home.path().join("app-server-daemon");
++        let state = home.path().join(super::STATE_DIR_NAME);
+         let daemon = Daemon {
+             log_diagnostics: false,
+             socket_path: home
+@@ -1437,3 +1399,7 @@ mod tests {
+         );
+     }
+ }
++
++#[cfg(test)]
++#[path = "meshagent_update_tests.rs"]
++mod meshagent_update_tests;
+diff --git a/codex-rs/app-server-daemon/src/managed_install.rs b/codex-rs/app-server-daemon/src/managed_install.rs
+index ce3107f..4072d04 100644
+--- a/codex-rs/app-server-daemon/src/managed_install.rs
++++ b/codex-rs/app-server-daemon/src/managed_install.rs
+@@ -14,6 +14,13 @@ use tokio::fs;
+ use tokio::process::Command;
+ use tokio::time::timeout;
  
- #[cfg(unix)]
- pub(crate) async fn run(http_client_factory: HttpClientFactory) -> Result<()> {
-+    if !AUTOMATIC_UPDATES_ENABLED {
-+        bail!(
-+            "automatic standalone updates are disabled in MeshAgent Codex; install updates through the MeshAgent distribution tooling"
++/// The enterprise daemon uses the package installed by MeshAgent distribution tooling.
++pub(crate) fn meshagent_managed_codex_bin(codex_home: &Path) -> PathBuf {
++    codex_home
++        .join("packages/standalone/current")
++        .join(managed_codex_file_name())
++}
++
+ /// New daemons own their packages, regardless of how the calling CLI was installed.
+ /// Preserve legacy launch state, including logs left after a daemon is stopped;
+ /// settings, installer selections, and lock files alone do not prove a prior launch.
+@@ -24,7 +31,7 @@ pub(crate) fn package_root(codex_home: &Path) -> PathBuf {
+     {
+         return dedicated;
+     }
+-    let state = codex_home.join("app-server-daemon");
++    let state = codex_home.join(crate::STATE_DIR_NAME);
+     for (package, artifacts) in [
+         (
+             "app-server-daemon",
+diff --git a/codex-rs/app-server-daemon/src/managed_install_path_tests.rs b/codex-rs/app-server-daemon/src/managed_install_path_tests.rs
+index b227c7e..a9aaab5 100644
+--- a/codex-rs/app-server-daemon/src/managed_install_path_tests.rs
++++ b/codex-rs/app-server-daemon/src/managed_install_path_tests.rs
+@@ -13,7 +13,7 @@ fn discovers_package_and_legacy_installs() {
+     );
+     std::fs::create_dir_all(&current).expect("current directory");
+     std::fs::write(&legacy, b"legacy").expect("legacy executable");
+-    let state = home.path().join("app-server-daemon");
++    let state = home.path().join(crate::STATE_DIR_NAME);
+     std::fs::create_dir(&state).unwrap();
+     for name in ["settings.json", "daemon.lock", "app-server.pid.lock"] {
+         std::fs::write(state.join(name), b"").unwrap();
+@@ -66,7 +66,7 @@ fn discovers_package_and_legacy_installs() {
+ #[test]
+ fn updater_only_runs_for_stable_installer_owned_releases() {
+     let home = tempfile::TempDir::new().expect("home");
+-    let state = home.path().join("app-server-daemon");
++    let state = home.path().join(crate::STATE_DIR_NAME);
+     std::fs::create_dir(&state).unwrap();
+     std::fs::write(state.join("app-server.stderr.log"), b"").unwrap();
+     let standalone = home.path().join("packages/standalone");
+diff --git a/codex-rs/app-server-daemon/src/meshagent_update_tests.rs b/codex-rs/app-server-daemon/src/meshagent_update_tests.rs
+new file mode 100644
+index 0000000..c30cc00
+--- /dev/null
++++ b/codex-rs/app-server-daemon/src/meshagent_update_tests.rs
+@@ -0,0 +1,95 @@
++use super::*;
++use codex_http_client::HttpClientFactory;
++use codex_http_client::OutboundProxyPolicy;
++use pretty_assertions::assert_eq;
++
++#[tokio::test]
++async fn enterprise_cli_package_update_never_requests_confirmation() {
++    let error = update_from_cli(|_| panic!("enterprise update must not copy a CLI package"))
++        .await
++        .expect_err("distribution tooling owns updates");
++    assert_eq!(
++        error.to_string(),
++        "daemon package updates are managed by MeshAgent distribution tooling"
++    );
++}
++
++#[tokio::test]
++async fn enterprise_updater_rejects_scheduled_and_manual_installs() {
++    let home = tempfile::TempDir::new().expect("temporary home");
++    let state = home.path().join(STATE_DIR_NAME);
++    let daemon = Daemon {
++        log_diagnostics: false,
++        socket_path: home.path().join("control.sock"),
++        pid_file: state.join(LEGACY_PID_FILE_NAME),
++        update_pid_file: state.join(LEGACY_UPDATE_PID_FILE_NAME),
++        operation_lock_file: state.join(OPERATION_LOCK_FILE_NAME),
++        settings_file: state.join(SETTINGS_FILE_NAME),
++        managed_codex_bin: managed_codex_bin(home.path()),
++    };
++    let factory = HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault);
++    for result in [
++        update_loop::run(factory.clone(), /*restore_release*/ None).await,
++        update_loop::request_manual_update(&daemon, factory)
++            .await
++            .map(|_| ()),
++    ] {
++        assert_eq!(
++            result
++                .expect_err("enterprise installs are disabled")
++                .to_string(),
++            "standalone updates are disabled in MeshAgent Codex; install updates through the MeshAgent distribution tooling"
 +        );
 +    }
-     let mut terminate =
-         signal(SignalKind::terminate()).context("failed to install updater shutdown handler")?;
-     let running_updater_identity = current_updater_identity().await?;
++    assert_eq!(
++        std::fs::read_dir(home.path())
++            .expect("home entries")
++            .count(),
++        0
++    );
++}
++
++#[tokio::test]
++async fn enterprise_start_requires_the_meshagent_managed_package() {
++    let home = tempfile::TempDir::new().expect("temporary home");
++    let dedicated = home.path().join("packages/app-server-daemon/current/bin");
++    std::fs::create_dir_all(&dedicated).expect("dedicated package");
++    std::fs::write(
++        dedicated.join(if cfg!(windows) { "codex.exe" } else { "codex" }),
++        b"upstream package",
++    )
++    .expect("upstream binary");
++    let state = home.path().join(STATE_DIR_NAME);
++    let daemon = Daemon {
++        log_diagnostics: false,
++        socket_path: home.path().join("control.sock"),
++        pid_file: state.join(LEGACY_PID_FILE_NAME),
++        update_pid_file: state.join(LEGACY_UPDATE_PID_FILE_NAME),
++        operation_lock_file: state.join(OPERATION_LOCK_FILE_NAME),
++        settings_file: state.join(SETTINGS_FILE_NAME),
++        managed_codex_bin: managed_codex_bin(home.path()),
++    };
++    let settings = DaemonSettings::default();
++    let error = prepare_install::prepare(&daemon, &settings)
++        .await
++        .expect_err("upstream package must not be selected");
++    assert!(
++        error
++            .to_string()
++            .contains("MeshAgent Codex distribution helper")
++    );
++    assert!(!home.path().join("packages/standalone").exists());
++    let managed = daemon
++        .managed_codex_bin
++        .parent()
++        .expect("managed directory");
++    std::fs::create_dir_all(managed).expect("managed directory");
++    std::fs::copy(
++        std::env::current_exe().expect("test binary"),
++        &daemon.managed_codex_bin,
++    )
++    .expect("managed binary");
++    prepare_install::prepare(&daemon, &settings)
++        .await
++        .expect("use managed package");
++}
+diff --git a/codex-rs/app-server-daemon/src/prepare_install.rs b/codex-rs/app-server-daemon/src/prepare_install.rs
+index ecf2501..031cd32 100644
+--- a/codex-rs/app-server-daemon/src/prepare_install.rs
++++ b/codex-rs/app-server-daemon/src/prepare_install.rs
+@@ -25,19 +25,8 @@ pub struct InstallRequest {
+ }
+ 
+ /// Prepare a missing package while the caller holds the daemon operation lock.
+-pub(super) async fn prepare(daemon: &Daemon, settings: &DaemonSettings) -> Result<()> {
+-    let source = InstallContext::current().package_layout.as_ref();
+-    // Keep package replacement state out of the CLI dispatcher's async stack frame.
+-    Box::pin(prepare_from_package(
+-        daemon,
+-        settings,
+-        InstallMode::Missing,
+-        source.map(|layout| layout.package_dir.as_path()),
+-        &std::env::current_exe()?,
+-        |_| Ok(true),
+-    ))
+-    .await
+-    .map(|_| ())
++pub(super) async fn prepare(daemon: &Daemon, _settings: &DaemonSettings) -> Result<()> {
++    daemon.ensure_managed_codex_bin()
+ }
+ 
+ /// Select this CLI's complete package and pin it, restarting only a running daemon.
+@@ -45,6 +34,10 @@ pub(super) async fn prepare(daemon: &Daemon, settings: &DaemonSettings) -> Resul
+ pub async fn update_from_cli(
+     confirm: impl FnOnce(&InstallRequest) -> Result<bool>,
+ ) -> Result<Option<crate::UpdateOutput>> {
++    anyhow::ensure!(
++        crate::DISTRIBUTION_UPDATES_ENABLED,
++        "daemon package updates are managed by MeshAgent distribution tooling"
++    );
+     crate::ensure_supported_platform()?;
+     #[cfg(windows)]
+     crate::backend::windows::ensure_not_elevated()?;
+@@ -110,7 +103,7 @@ async fn prepare_from_package(
+         }
+         if !matches!(root.join("current").symlink_metadata(), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+             || ["daemon.pid", "daemon.stderr.log", "daemon-updater.pid", "daemon-updater.stderr.log"]
+-                .iter().any(|name| !matches!(home.join("app-server-daemon").join(name).symlink_metadata(), Err(error) if error.kind() == std::io::ErrorKind::NotFound))
++                .iter().any(|name| !matches!(home.join("codex-app-server-daemon").join(name).symlink_metadata(), Err(error) if error.kind() == std::io::ErrorKind::NotFound))
+         {
+             daemon.ensure_managed_codex_bin()?;
+             return Ok(true);
+diff --git a/codex-rs/app-server-daemon/src/prepare_install_tests.rs b/codex-rs/app-server-daemon/src/prepare_install_tests.rs
+index 810a45b..c34a69e 100644
+--- a/codex-rs/app-server-daemon/src/prepare_install_tests.rs
++++ b/codex-rs/app-server-daemon/src/prepare_install_tests.rs
+@@ -10,7 +10,7 @@ use std::path::Path;
+ use std::path::PathBuf;
+ 
+ fn daemon(home: &std::path::Path) -> crate::Daemon {
+-    let state = home.join("app-server-daemon");
++    let state = home.join("codex-app-server-daemon");
+     crate::Daemon {
+         log_diagnostics: false,
+         socket_path: state.join("app-server.sock"),
+@@ -156,7 +156,7 @@ async fn legacy_selection_is_not_migrated_or_refreshed() {
+     let legacy = home.join("packages/standalone");
+     let bin = package(&legacy.join("releases/old"), "0.150.0");
+     std::os::unix::fs::symlink("releases/old", legacy.join("current")).unwrap();
+-    let state = home.join("app-server-daemon");
++    let state = home.join("codex-app-server-daemon");
+     std::fs::create_dir(&state).unwrap();
+     std::fs::write(state.join("app-server.stderr.log"), b"").unwrap();
+     let source = temp.path().join("new");
+@@ -245,7 +245,7 @@ async fn explicit_selection_requires_unchanged_cli_and_pins_all_versions() {
+             std::fs::remove_file(root.join("current")).unwrap();
+             std::os::unix::fs::symlink(root.join("releases").join(name), root.join("current"))
+                 .unwrap();
+-            let state = home.join("app-server-daemon");
++            let state = home.join("codex-app-server-daemon");
+             std::fs::create_dir_all(&state).unwrap();
+             std::fs::write(state.join("app-server.stderr.log"), b"").unwrap();
+         }
+@@ -377,7 +377,7 @@ async fn broken_selection_is_not_a_missing_installation() {
+     assert!(
+         error
+             .to_string()
+-            .contains("repair the existing installation")
++            .contains("MeshAgent Codex distribution helper")
+     );
+     assert_eq!(
+         std::fs::read_link(current).unwrap(),
+diff --git a/codex-rs/app-server-daemon/src/settings_tests.rs b/codex-rs/app-server-daemon/src/settings_tests.rs
+index c8d81fb..597d165 100644
+--- a/codex-rs/app-server-daemon/src/settings_tests.rs
++++ b/codex-rs/app-server-daemon/src/settings_tests.rs
+@@ -133,7 +133,7 @@ async fn update_interval_accepts_long_values_and_rejects_zero() {
+ #[tokio::test]
+ async fn telemetry_distinguishes_presence_from_default_values() -> anyhow::Result<()> {
+     let home = TempDir::new()?;
+-    let dir = home.path().join("app-server-daemon");
++    let dir = home.path().join("codex-app-server-daemon");
+     tokio::fs::create_dir(&dir).await?;
+     let path = dir.join("settings.json");
+     for (contents, presence) in [
+diff --git a/codex-rs/app-server-daemon/src/update_loop.rs b/codex-rs/app-server-daemon/src/update_loop.rs
+index 8f55126..53c5b25 100644
+--- a/codex-rs/app-server-daemon/src/update_loop.rs
++++ b/codex-rs/app-server-daemon/src/update_loop.rs
+@@ -41,10 +41,16 @@ mod manual_update;
+ #[path = "migration.rs"]
+ mod migration;
+ 
++use crate::DISTRIBUTION_UPDATES_ENABLED;
++
+ pub(crate) async fn request_manual_update(
+     daemon: &Daemon,
+     http_client_factory: HttpClientFactory,
+ ) -> Result<crate::UpdateOutput> {
++    anyhow::ensure!(
++        DISTRIBUTION_UPDATES_ENABLED,
++        "standalone updates are disabled in MeshAgent Codex; install updates through the MeshAgent distribution tooling"
++    );
+     if daemon
+         .pid_file
+         .file_name()
+@@ -71,6 +77,10 @@ pub(crate) async fn run(
+     http_client_factory: HttpClientFactory,
+     restore_release: Option<String>,
+ ) -> Result<()> {
++    anyhow::ensure!(
++        DISTRIBUTION_UPDATES_ENABLED,
++        "standalone updates are disabled in MeshAgent Codex; install updates through the MeshAgent distribution tooling"
++    );
+     let http = RouteAwareClientPool::new_without_request_logging(
+         http_client_factory,
+         ClientRouteClass::Other,
+diff --git a/codex-rs/app-server-daemon/src/update_loop_tests.rs b/codex-rs/app-server-daemon/src/update_loop_tests.rs
+index d932742..291f799 100644
+--- a/codex-rs/app-server-daemon/src/update_loop_tests.rs
++++ b/codex-rs/app-server-daemon/src/update_loop_tests.rs
+@@ -56,6 +56,7 @@ struct FakeInstallerHttp {
+ 
+ #[cfg(unix)]
+ #[tokio::test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ async fn explicit_update_migrates_running_and_stopped_installations() {
+     for (running, local) in [(false, false), (true, false), (false, true), (true, true)] {
+         let home = TempDir::new().unwrap();
+@@ -296,7 +297,7 @@ fn manual_update_daemon(home: &TempDir) -> (Daemon, String) {
+     std::os::unix::fs::symlink(format!("releases/{release}"), standalone.join("current"))
+         .expect("current release");
+     std::fs::write(standalone.join("auto-update-version"), &release).expect("latest marker");
+-    let state = home.path().join("app-server-daemon");
++    let state = home.path().join("codex-app-server-daemon");
+     std::fs::create_dir(&state).unwrap();
+     std::fs::write(state.join("app-server.stderr.log"), b"").unwrap();
+     (
+@@ -538,6 +539,7 @@ async fn test_control_server(
+ 
+ #[cfg(unix)]
+ #[tokio::test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ async fn manual_update_restarts_managed_daemon_with_automatic_updates_disabled() {
+     check_manual_update_restart("standalone").await;
+ }
+@@ -651,7 +653,9 @@ async fn confirmed_feature_restart_preserves_ownership_and_skips_matching_settin
+                 .unwrap_err();
+             std::fs::rename(saved_package, selected_package).unwrap();
+             assert!(
+-                error.to_string().contains("daemon executable not found"),
++                error
++                    .to_string()
++                    .contains("managed MeshAgent Codex install not found"),
+                 "{error:#}"
+             );
+             assert_eq!(daemon.load_settings().await.unwrap(), original);
+@@ -688,6 +692,7 @@ async fn confirmed_feature_restart_preserves_ownership_and_skips_matching_settin
+ 
+ #[cfg(unix)]
+ #[tokio::test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ async fn manual_update_restarts_local_daemon_with_automatic_updates_disabled() {
+     check_manual_update_restart("app-server-daemon").await;
+ }
+@@ -937,6 +942,7 @@ async fn update_rejects_a_package_root_change_during_download() {
+ 
+ #[cfg(unix)]
+ #[tokio::test]
++#[ignore = "MeshAgent distribution tooling owns package installation and updates"]
+ async fn daemon_owned_updates_require_and_request_an_isolated_installer() {
+     let home = TempDir::new().unwrap();
+     let (mut daemon, release) = manual_update_daemon(&home);
 diff --git a/codex-rs/app-server-transport/src/transport/mod.rs b/codex-rs/app-server-transport/src/transport/mod.rs
-index c8b0e57..5bb2da0 100644
+index 232ce94..ffc4f9e 100644
 --- a/codex-rs/app-server-transport/src/transport/mod.rs
 +++ b/codex-rs/app-server-transport/src/transport/mod.rs
-@@ -51,9 +51,9 @@ pub use websocket::start_websocket_acceptor;
+@@ -50,14 +50,14 @@ pub use websocket::start_websocket_acceptor;
  const INTERNAL_ERROR_CODE: i64 = -32603;
  const OVERLOADED_ERROR_CODE: i64 = -32001;
  
@@ -265,23 +808,20 @@ index c8b0e57..5bb2da0 100644
 +const APP_SERVER_CONTROL_SOCKET_DIR_NAME: &str = "codex-app-server";
 +const APP_SERVER_CONTROL_SOCKET_FILE_NAME: &str = "control.sock";
 +const APP_SERVER_STARTUP_LOCK_FILE_NAME: &str = "startup.lock";
+ const DAEMON_RECOVERY_FILE_NAME: &str = "loaded-threads.json";
  
- pub fn app_server_control_socket_path(codex_home: &Path) -> std::io::Result<AbsolutePathBuf> {
-     AbsolutePathBuf::from_absolute_path(
-@@ -123,7 +123,7 @@ impl AppServerTransport {
-                 let codex_home = find_codex_home().map_err(|err| {
-                     AppServerTransportParseError::InvalidUnixSocketPath {
-                         listen_url: listen_url.to_string(),
--                        message: format!("failed to resolve CODEX_HOME: {err}"),
-+                        message: format!("failed to resolve MESHAGENT_CODEX_HOME: {err}"),
-                     }
-                 })?;
-                 app_server_control_socket_path(&codex_home).map_err(|err| {
+ pub fn daemon_recovery_file_path(codex_home: &Path) -> PathBuf {
+     codex_home
+-        .join("app-server-daemon")
++        .join("codex-app-server-daemon")
+         .join(DAEMON_RECOVERY_FILE_NAME)
+ }
+ 
 diff --git a/codex-rs/app-server-transport/src/transport/unix_socket_tests.rs b/codex-rs/app-server-transport/src/transport/unix_socket_tests.rs
-index ac0b2b0..85cac51 100644
+index e19834f..dd81961 100644
 --- a/codex-rs/app-server-transport/src/transport/unix_socket_tests.rs
 +++ b/codex-rs/app-server-transport/src/transport/unix_socket_tests.rs
-@@ -200,21 +200,13 @@ fn default_control_socket_path() -> AbsolutePathBuf {
+@@ -453,21 +453,13 @@ fn default_control_socket_path() -> AbsolutePathBuf {
  }
  
  fn test_socket_path(temp_dir: &Path) -> AbsolutePathBuf {
@@ -307,6 +847,19 @@ index ac0b2b0..85cac51 100644
  }
  
  async fn connect_to_socket(socket_path: &Path) -> IoResult<UnixStream> {
+diff --git a/codex-rs/app-server/tests/common/test_app_server.rs b/codex-rs/app-server/tests/common/test_app_server.rs
+index 39fbef2..d3b6a42 100644
+--- a/codex-rs/app-server/tests/common/test_app_server.rs
++++ b/codex-rs/app-server/tests/common/test_app_server.rs
+@@ -263,7 +263,7 @@ impl TestAppServer {
+         cmd.stdout(Stdio::piped());
+         cmd.stderr(Stdio::piped());
+         cmd.current_dir(codex_home);
+-        cmd.env("CODEX_HOME", codex_home);
++        cmd.env("MESHAGENT_CODEX_HOME", codex_home);
+         cmd.env("RUST_LOG", "warn");
+         // Keep integration tests isolated from host managed configuration.
+         cmd.env(
 diff --git a/codex-rs/cli/src/bin/logs_client.rs b/codex-rs/cli/src/bin/logs_client.rs
 index e6227a7..01637e6 100644
 --- a/codex-rs/cli/src/bin/logs_client.rs
@@ -323,26 +876,75 @@ index e6227a7..01637e6 100644
  
      /// Direct path to the logs SQLite database. Overrides --codex-home.
 diff --git a/codex-rs/cli/src/cloud_config.rs b/codex-rs/cli/src/cloud_config.rs
-index 4ca60ac..1e316ed 100644
+index 5e87d12..99aa27e 100644
 --- a/codex-rs/cli/src/cloud_config.rs
 +++ b/codex-rs/cli/src/cloud_config.rs
-@@ -30,7 +30,7 @@ pub(crate) async fn config_builder(
+@@ -36,7 +36,7 @@ pub(crate) async fn config_builder(
      let cli_overrides = config_overrides
          .parse_overrides()
          .map_err(anyhow::Error::msg)?;
 -    let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;
 +    let codex_home = find_codex_home().context("failed to resolve MESHAGENT_CODEX_HOME")?;
-     let cwd = AbsolutePathBuf::current_dir().context("failed to resolve current directory")?;
-     let bootstrap_config = load_config_toml_with_layer_stack(
-         codex_home.as_path(),
+     let cwd = match harness_overrides.cwd.as_deref() {
+         Some(cwd) => AbsolutePathBuf::relative_to_current_dir(cwd),
+         None => AbsolutePathBuf::current_dir(),
+diff --git a/codex-rs/cli/src/daemon_update_tests.rs b/codex-rs/cli/src/daemon_update_tests.rs
+index d93069f..a6306c4 100644
+--- a/codex-rs/cli/src/daemon_update_tests.rs
++++ b/codex-rs/cli/src/daemon_update_tests.rs
+@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
+ use std::os::unix::fs::PermissionsExt;
+ 
+ #[test]
+-fn daemon_handoff_uses_selected_executable_and_propagates_failure() -> anyhow::Result<()> {
++fn enterprise_daemon_update_never_launches_selected_executable() -> anyhow::Result<()> {
+     let dir = tempfile::tempdir()?;
+     let executable = dir.path().join("launching CLI");
+     let receipt = dir.path().join("launching CLI.args");
+@@ -13,25 +13,17 @@ fn daemon_handoff_uses_selected_executable_and_propagates_failure() -> anyhow::R
+         "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\n",
+     )?;
+     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(/*mode*/ 0o700))?;
+-    for (source, expected) in [
+-        (
+-            DaemonUpdateSource::PublicStable,
+-            "app-server\ndaemon\nupdate\n",
+-        ),
+-        (
+-            DaemonUpdateSource::ThisCli,
+-            "app-server\ndaemon\nupdate\n--from-cli\n--yes\n",
+-        ),
++    for source in [
++        DaemonUpdateSource::PublicStable,
++        DaemonUpdateSource::ThisCli,
+     ] {
+-        run_update_action(UpdateAction::Daemon(source), Some(&executable))?;
+-        assert_eq!(std::fs::read_to_string(&receipt)?, expected);
++        let error = run_update_action(UpdateAction::Daemon(source), Some(&executable))
++            .expect_err("MeshAgent packaging owns updates");
++        assert_eq!(
++            error.to_string(),
++            "MeshAgent Codex updates are managed by MeshAgent distribution tooling"
++        );
++        assert!(!receipt.exists());
+     }
+-    std::fs::write(&executable, "#!/bin/sh\nexit 7\n")?;
+-    let error = run_update_action(
+-        UpdateAction::Daemon(DaemonUpdateSource::ThisCli),
+-        Some(&executable),
+-    )
+-    .unwrap_err();
+-    assert!(error.to_string().contains("Daemon update failed"));
+     Ok(())
+ }
 diff --git a/codex-rs/cli/src/doctor.rs b/codex-rs/cli/src/doctor.rs
-index 0e0e06b..725c5c9 100644
+index 3dc3d07..e8dad4a 100644
 --- a/codex-rs/cli/src/doctor.rs
 +++ b/codex-rs/cli/src/doctor.rs
-@@ -1167,7 +1167,10 @@ where
- 
- fn config_check(config: &Config) -> DoctorCheck {
-     let mut details = Vec::new();
+@@ -1106,7 +1106,10 @@ fn config_check(config: &Config) -> DoctorCheck {
+     details
+         .push("configuration scope: invocation config, including cloud-managed policy".to_string());
+     details.push("active thread overrides: not inspected".to_string());
 -    details.push(format!("CODEX_HOME: {}", config.codex_home.display()));
 +    details.push(format!(
 +        "MESHAGENT_CODEX_HOME: {}",
@@ -351,7 +953,7 @@ index 0e0e06b..725c5c9 100644
      details.push(format!("cwd: {}", config.cwd.display()));
      details.push(format!(
          "model: {}",
-@@ -2193,7 +2196,7 @@ fn non_empty_trimmed(value: String) -> Option<String> {
+@@ -2093,7 +2096,7 @@ fn terminal_size_issues(inputs: &TerminalCheckInputs) -> Vec<DoctorIssue> {
  
  async fn state_check(config: &Config, command: &DoctorCommand) -> DoctorCheck {
      let mut details = Vec::new();
@@ -359,8 +961,8 @@ index 0e0e06b..725c5c9 100644
 +    path_readiness(&mut details, "MESHAGENT_CODEX_HOME", &config.codex_home);
      path_readiness(&mut details, "log dir", &config.log_dir);
      path_readiness(&mut details, "sqlite home", config.sqlite_config().home());
-     let mut status = CheckStatus::Ok;
-@@ -2569,14 +2572,14 @@ fn fallback_state_check() -> DoctorCheck {
+ 
+@@ -2493,14 +2496,14 @@ fn fallback_state_check() -> DoctorCheck {
              "state.paths",
              "state",
              CheckStatus::Ok,
@@ -379,10 +981,10 @@ index 0e0e06b..725c5c9 100644
          .detail(err.to_string()),
      }
 diff --git a/codex-rs/cli/src/doctor/background.rs b/codex-rs/cli/src/doctor/background.rs
-index 3611e28..9e43d5f 100644
+index b6d13de..9b186d2 100644
 --- a/codex-rs/cli/src/doctor/background.rs
 +++ b/codex-rs/cli/src/doctor/background.rs
-@@ -14,7 +14,7 @@ use super::CheckStatus;
+@@ -17,7 +17,7 @@ use super::CheckStatus;
  use super::DoctorCheck;
  
  const MAX_PROBE_ERROR_CHARS: usize = 120;
@@ -533,10 +1135,10 @@ index c008567..75f553a 100644
      pub config_profile: Option<ProfileV2Name>,
  
 diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
-index 5801878..bac3e43 100644
+index ec4ae46..7e8f038 100644
 --- a/codex-rs/cli/src/main.rs
 +++ b/codex-rs/cli/src/main.rs
-@@ -461,7 +461,7 @@ type HostSandboxArgs = UnsupportedSandboxArgs;
+@@ -468,7 +468,7 @@ type HostSandboxArgs = UnsupportedSandboxArgs;
  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
  #[derive(Debug, Parser)]
  struct UnsupportedSandboxArgs {
@@ -545,20 +1147,49 @@ index 5801878..bac3e43 100644
      #[arg(long = "profile", short = 'p')]
      pub config_profile: Option<ProfileV2Name>,
  
+@@ -767,11 +767,17 @@ fn handle_app_exit(
+     Ok(())
+ }
+ 
++const DISTRIBUTION_UPDATES_ENABLED: bool = false;
++
+ /// Run the update action and print the result.
+ fn run_update_action(
+     action: UpdateAction,
+     cli_executable: Option<&std::path::Path>,
+ ) -> anyhow::Result<()> {
++    anyhow::ensure!(
++        DISTRIBUTION_UPDATES_ENABLED,
++        "MeshAgent Codex updates are managed by MeshAgent distribution tooling"
++    );
+     if let UpdateAction::Daemon(source) = action {
+         let executable = cli_executable
+             .ok_or_else(|| anyhow::anyhow!("Cannot locate the launching Codex CLI"))?;
+@@ -853,6 +859,10 @@ fn resolve_windows_update_command_from_path(
+ }
+ 
+ fn run_update_command() -> anyhow::Result<()> {
++    anyhow::ensure!(
++        DISTRIBUTION_UPDATES_ENABLED,
++        "MeshAgent Codex updates are managed by MeshAgent distribution tooling"
++    );
+     #[cfg(debug_assertions)]
+     {
+         anyhow::bail!(
 diff --git a/codex-rs/cli/src/mcp_cmd.rs b/codex-rs/cli/src/mcp_cmd.rs
-index 38a7f32..44b2f1f 100644
+index 8fda684..8bff798 100644
 --- a/codex-rs/cli/src/mcp_cmd.rs
 +++ b/codex-rs/cli/src/mcp_cmd.rs
-@@ -351,7 +351,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
+@@ -306,7 +306,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
  
      validate_server_name(&name)?;
  
 -    let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;
 +    let codex_home = find_codex_home().context("failed to resolve MESHAGENT_CODEX_HOME")?;
  
-     let (transport, oauth_client_id, client_registration, oauth_resource) = match transport_args {
-         AddMcpTransportArgs {
-@@ -534,7 +534,7 @@ async fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveAr
+     let (transport, oauth_client_id, oauth_client_secret, client_registration, oauth_resource) =
+         match transport_args {
+@@ -512,7 +512,7 @@ async fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveAr
  
      validate_server_name(&name)?;
  
@@ -568,7 +1199,7 @@ index 38a7f32..44b2f1f 100644
          .await
          .with_context(|| format!("failed to load MCP servers from {}", codex_home.display()))?;
 diff --git a/codex-rs/cli/src/plugin_cmd.rs b/codex-rs/cli/src/plugin_cmd.rs
-index e82200b..e99ce84 100644
+index d282452..02b6c65 100644
 --- a/codex-rs/cli/src/plugin_cmd.rs
 +++ b/codex-rs/cli/src/plugin_cmd.rs
 @@ -731,7 +731,7 @@ struct PluginCommandContext {
@@ -581,7 +1212,7 @@ index e82200b..e99ce84 100644
          .await
          .context("failed to load configuration")?;
 diff --git a/codex-rs/cli/tests/app_server.rs b/codex-rs/cli/tests/app_server.rs
-index 4d3c0d4..42d5468 100644
+index 7a55c4c..a51b52f 100644
 --- a/codex-rs/cli/tests/app_server.rs
 +++ b/codex-rs/cli/tests/app_server.rs
 @@ -9,7 +9,7 @@ use tempfile::TempDir;
@@ -620,7 +1251,7 @@ index 7007b2d..d3e7d06 100644
              .env("no_proxy", "127.0.0.1,localhost")
              .env_remove("CODEX_ACCESS_TOKEN")
 diff --git a/codex-rs/cli/tests/debug_clear_memories.rs b/codex-rs/cli/tests/debug_clear_memories.rs
-index 4498252..af30a2c 100644
+index 5b44c97..acaf563 100644
 --- a/codex-rs/cli/tests/debug_clear_memories.rs
 +++ b/codex-rs/cli/tests/debug_clear_memories.rs
 @@ -8,7 +8,7 @@ use tempfile::TempDir;
@@ -659,10 +1290,19 @@ index 854b87b..a3956f3 100644
  
      cmd.assert()
 diff --git a/codex-rs/cli/tests/doctor_enterprise_network.rs b/codex-rs/cli/tests/doctor_enterprise_network.rs
-index 2d384a0..8aa9c8c 100644
+index 385e807..27dfdd2 100644
 --- a/codex-rs/cli/tests/doctor_enterprise_network.rs
 +++ b/codex-rs/cli/tests/doctor_enterprise_network.rs
-@@ -43,7 +43,7 @@ async fn invalid_custom_ca_falls_back_to_system_roots() -> Result<()> {
+@@ -84,7 +84,7 @@ trust_level = "trusted"
+ 
+         let output = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+             .current_dir(codex_home.path())
+-            .env("CODEX_HOME", codex_home.path())
++            .env("MESHAGENT_CODEX_HOME", codex_home.path())
+             .env("NO_PROXY", "127.0.0.1,localhost")
+             .env("no_proxy", "127.0.0.1,localhost")
+             .env_remove("CODEX_ACCESS_TOKEN")
+@@ -162,7 +162,7 @@ async fn invalid_custom_ca_falls_back_to_system_roots() -> Result<()> {
          let mut command = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
          command
              .args(["doctor", "--json"])
@@ -671,7 +1311,7 @@ index 2d384a0..8aa9c8c 100644
              .env("CODEX_CA_CERTIFICATE", &certificate)
              .stdin(Stdio::null());
          if let Some(sandbox) = sandbox {
-@@ -106,7 +106,7 @@ fn doctor_reports_macos_system_proxy_configuration_and_policy() -> Result<()> {
+@@ -225,7 +225,7 @@ fn doctor_reports_macos_system_proxy_configuration_and_policy() -> Result<()> {
  fn doctor_report(codex_home: &Path) -> Result<Value> {
      let output = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
          .args(["doctor", "--json"])
@@ -681,10 +1321,10 @@ index 2d384a0..8aa9c8c 100644
          .output()
          .context("failed to run the doctor")?;
 diff --git a/codex-rs/cli/tests/exec_server.rs b/codex-rs/cli/tests/exec_server.rs
-index b54b315..3783163 100644
+index 75bb834..fbd749a 100644
 --- a/codex-rs/cli/tests/exec_server.rs
 +++ b/codex-rs/cli/tests/exec_server.rs
-@@ -48,7 +48,7 @@ use wiremock::matchers::path;
+@@ -55,7 +55,7 @@ use wiremock::matchers::path;
  
  fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
      let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
@@ -693,16 +1333,16 @@ index b54b315..3783163 100644
      Ok(cmd)
  }
  
-@@ -177,7 +177,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{collector_url}/v1/metrics", pr
-     )?;
-     let mut command = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+@@ -192,7 +192,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{collector_url}/v1/metrics", pr
+ 
+     let mut command = tokio::process::Command::new(executable);
      command
 -        .env("CODEX_HOME", codex_home.path())
 +        .env("MESHAGENT_CODEX_HOME", codex_home.path())
          .env("CODEX_API_KEY", "test-api-key")
          .env(
              codex_exec_server::CODEX_EXEC_SERVER_EXIT_ON_STDIN_CLOSE_ENV_VAR,
-@@ -401,7 +401,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{base_url}/v1/metrics", protoco
+@@ -430,7 +430,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{base_url}/v1/metrics", protoco
      let subprocess = async move {
          let mut command = tokio::process::Command::new(codex_bin);
          command
@@ -711,7 +1351,7 @@ index b54b315..3783163 100644
              .env("NO_PROXY", "127.0.0.1,localhost")
              .env("no_proxy", "127.0.0.1,localhost")
              .args(["exec-server", "--listen", "stdio"])
-@@ -531,7 +531,7 @@ async fn send_json_line(
+@@ -560,7 +560,7 @@ async fn send_json_line(
  fn local_exec_server_exits_successfully_on_sigterm() -> Result<()> {
      let codex_home = TempDir::new()?;
      let mut child = std::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
@@ -743,7 +1383,7 @@ index 30b5999..f9208fd 100644
              "execpolicy",
              "check",
 diff --git a/codex-rs/cli/tests/features.rs b/codex-rs/cli/tests/features.rs
-index 3aad6fd..51a60d8 100644
+index 4beebb0..8fbf6e9 100644
 --- a/codex-rs/cli/tests/features.rs
 +++ b/codex-rs/cli/tests/features.rs
 @@ -21,7 +21,7 @@ use wiremock::matchers::path;
@@ -808,7 +1448,7 @@ index bfc21b2..0017875 100644
  }
  
 diff --git a/codex-rs/cli/tests/mcp_add_remove.rs b/codex-rs/cli/tests/mcp_add_remove.rs
-index ca68faa..de7069d 100644
+index 80d0c11..b208503 100644
 --- a/codex-rs/cli/tests/mcp_add_remove.rs
 +++ b/codex-rs/cli/tests/mcp_add_remove.rs
 @@ -14,7 +14,7 @@ use wiremock::matchers::path;
@@ -900,7 +1540,7 @@ index 56379d0..f8e7c41 100644
          .env("no_proxy", "127.0.0.1,localhost")
          .env_remove("CODEX_ACCESS_TOKEN")
 diff --git a/codex-rs/cli/tests/sandbox_network_proxy.rs b/codex-rs/cli/tests/sandbox_network_proxy.rs
-index c029b67..af3eef0 100644
+index 21747c3..709e0fa 100644
 --- a/codex-rs/cli/tests/sandbox_network_proxy.rs
 +++ b/codex-rs/cli/tests/sandbox_network_proxy.rs
 @@ -34,7 +34,7 @@ mode = "full"
@@ -912,7 +1552,7 @@ index c029b67..af3eef0 100644
          .args([
              "sandbox",
              "--permission-profile",
-@@ -125,7 +125,7 @@ allow_local_binding = false
+@@ -139,7 +139,7 @@ allow_local_binding = false
  
      let url = format!("http://127.0.0.2:{port}/");
      let output = std::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
@@ -922,10 +1562,10 @@ index c029b67..af3eef0 100644
              "sandbox",
              "--permission-profile",
 diff --git a/codex-rs/cli/tests/update.rs b/codex-rs/cli/tests/update.rs
-index cf1742c..ec604f2 100644
+index cf1742c..76d6225 100644
 --- a/codex-rs/cli/tests/update.rs
 +++ b/codex-rs/cli/tests/update.rs
-@@ -5,7 +5,7 @@ use tempfile::TempDir;
+@@ -5,11 +5,10 @@ use tempfile::TempDir;
  
  fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
      let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
@@ -934,11 +1574,26 @@ index cf1742c..ec604f2 100644
      Ok(cmd)
  }
  
+-#[cfg(debug_assertions)]
+ #[tokio::test]
+ async fn update_does_not_start_interactive_prompt() -> Result<()> {
+     let codex_home = TempDir::new()?;
+@@ -18,7 +17,9 @@ async fn update_does_not_start_interactive_prompt() -> Result<()> {
+         .arg("update")
+         .assert()
+         .failure()
+-        .stderr(contains("`codex update` is not available in debug builds"));
++        .stderr(contains(
++            "MeshAgent Codex updates are managed by MeshAgent distribution tooling",
++        ));
+ 
+     Ok(())
+ }
 diff --git a/codex-rs/core/tests/suite/mcp_oauth_refresh_tests.rs b/codex-rs/core/tests/suite/mcp_oauth_refresh_tests.rs
-index 36a7139..70f8e48 100644
+index 6ecfde4..0b07614 100644
 --- a/codex-rs/core/tests/suite/mcp_oauth_refresh_tests.rs
 +++ b/codex-rs/core/tests/suite/mcp_oauth_refresh_tests.rs
-@@ -58,7 +58,7 @@ async fn oauth_mode_refresh_replaces_the_live_connection(
+@@ -167,7 +167,7 @@ async fn oauth_mode_refresh_replaces_the_live_connection(
          "environment_id": DEFAULT_MCP_SERVER_ENVIRONMENT_ID,
      }))?;
      let home = Arc::new(tempfile::tempdir()?);
@@ -977,11 +1632,84 @@ index 4adefbc..d8ec4c7 100644
                  },
              }
  
+diff --git a/codex-rs/tui/src/app/daemon_menu.rs b/codex-rs/tui/src/app/daemon_menu.rs
+index bf9934d..0a5b809 100644
+--- a/codex-rs/tui/src/app/daemon_menu.rs
++++ b/codex-rs/tui/src/app/daemon_menu.rs
+@@ -42,7 +42,7 @@ impl App {
+         } else if self.daemon_cli_executable.is_none() {
+             Some("Run the Codex CLI to manage the daemon from this menu.")
+         } else {
+-            None
++            Some("MeshAgent Codex updates are managed by MeshAgent distribution tooling.")
+         };
+         if let Some(guidance) = unavailable {
+             header.push(Line::from(guidance.dim()));
+diff --git a/codex-rs/tui/src/app/daemon_menu_tests.rs b/codex-rs/tui/src/app/daemon_menu_tests.rs
+index 0928bf3..c720377 100644
+--- a/codex-rs/tui/src/app/daemon_menu_tests.rs
++++ b/codex-rs/tui/src/app/daemon_menu_tests.rs
+@@ -63,6 +63,7 @@ async fn daemon_version_notice_preserves_manual_update_guidance() {
+ }
+ 
+ #[tokio::test]
++#[ignore = "MeshAgent distribution tooling owns daemon updates"]
+ async fn daemon_menu_is_read_only_and_confirmation_can_cancel_or_handoff() {
+     let mut app = make_test_app().await;
+     let (chat, _, mut rx, _) = make_chatwidget_manual_with_sender().await;
+@@ -225,3 +226,28 @@ async fn unavailable_daemon_menu_offers_guidance_without_update_actions() {
+     assert!(rx.try_recv().is_err());
+     assert_eq!(app.pending_update_action, None);
+ }
++
++#[tokio::test]
++async fn enterprise_daemon_menu_does_not_handoff_to_the_upstream_updater() {
++    let mut app = make_test_app().await;
++    let (chat, _, mut rx, _) = make_chatwidget_manual_with_sender().await;
++    app.chat_widget = chat;
++    app.daemon_cli_executable =
++        Some(AbsolutePathBuf::relative_to_current_dir("bin/codex").expect("CLI path"));
++    app.app_server_target = AppServerTarget::LocalDaemon {
++        allow_embedded_fallback: true,
++        endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
++            socket_path: AbsolutePathBuf::relative_to_current_dir("codex.sock").expect("socket"),
++        },
++    };
++    app.open_daemon_menu();
++    insta::assert_snapshot!(
++        "enterprise_daemon_menu",
++        render_bottom_popup(&app.chat_widget, /*width*/ 80)
++    );
++    app.chat_widget.handle_key_event(KeyCode::Enter.into());
++    app.chat_widget.handle_key_event(KeyCode::Down.into());
++    app.chat_widget.handle_key_event(KeyCode::Enter.into());
++    assert!(rx.try_recv().is_err());
++    assert_eq!(app.pending_update_action, None);
++}
+diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__enterprise_daemon_menu.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__enterprise_daemon_menu.snap
+new file mode 100644
+index 0000000..c76ec8f
+--- /dev/null
++++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__enterprise_daemon_menu.snap
+@@ -0,0 +1,13 @@
++---
++source: tui/src/app/daemon_menu_tests.rs
++expression: "render_bottom_popup(&app.chat_widget, 80)"
++---
++  Daemon
++  Not connected to the local background server.
++  MeshAgent Codex updates are managed by MeshAgent distribution tooling.
++
++
++›    Install latest public stable
++     Use this CLI build
++
++  enter select · esc back
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index 36852ab..58973a5 100644
+index 2697cba..84c64d4 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
-@@ -381,7 +381,8 @@ fn websocket_url_supports_auth_token(parsed: &Url) -> bool {
+@@ -448,7 +448,8 @@ fn websocket_url_supports_auth_token(parsed: &Url) -> bool {
  pub fn resolve_remote_addr(addr: &str) -> color_eyre::Result<RemoteAppServerEndpoint> {
      if let Some(socket_path) = addr.strip_prefix("unix://") {
          let socket_path = if socket_path.is_empty() {
@@ -991,7 +1719,7 @@ index 36852ab..58973a5 100644
              codex_app_server_client::app_server_control_socket_path(&codex_home)
                  .map_err(color_eyre::Report::new)?
          } else {
-@@ -2497,7 +2498,7 @@ mod tests {
+@@ -2960,7 +2961,7 @@ requires_openai_auth = {requires_openai_auth}
  
      #[test]
      fn resolve_remote_addr_accepts_default_socket() -> color_eyre::Result<()> {
@@ -1001,23 +1729,77 @@ index 36852ab..58973a5 100644
              resolve_remote_addr("unix://")?,
              RemoteAppServerEndpoint::UnixSocket {
 diff --git a/codex-rs/tui/src/render/highlight.rs b/codex-rs/tui/src/render/highlight.rs
-index e37867c..82af3a2 100644
+index 41b1d23..086cf4a 100644
 --- a/codex-rs/tui/src/render/highlight.rs
 +++ b/codex-rs/tui/src/render/highlight.rs
-@@ -116,7 +116,7 @@ pub(crate) fn validate_theme_name(name: Option<&str>, codex_home: Option<&Path>)
+@@ -10,7 +10,7 @@
+ //! | `THEME` | `OnceLock<RwLock<Theme>>` | Active color theme, swappable at runtime |
+ //! | `THEME_REVISION` | `AtomicU64` | Invalidates rendered-content caches after theme swaps |
+ //! | `THEME_OVERRIDE` | `OnceLock<Option<String>>` | Persisted user preference (write-once) |
+-//! | `CODEX_HOME` | `OnceLock<Option<PathBuf>>` | Root for custom `.tmTheme` discovery |
++//! | `MESHAGENT_CODEX_HOME` | `OnceLock<Option<PathBuf>>` | Root for custom `.tmTheme` discovery |
+ //!
+ //! **Lifecycle:** call [`set_theme_override`] once at startup (after the final
+ //! config is resolved) to persist the user preference and seed the `THEME`
+@@ -67,7 +67,7 @@ static THEME: OnceLock<RwLock<Theme>> = OnceLock::new();
+ #[cfg(not(test))]
+ static THEME_REVISION: AtomicU64 = AtomicU64::new(0);
+ static THEME_OVERRIDE: OnceLock<Option<String>> = OnceLock::new();
+-static CODEX_HOME: OnceLock<Option<PathBuf>> = OnceLock::new();
++static MESHAGENT_CODEX_HOME: OnceLock<Option<PathBuf>> = OnceLock::new();
+ 
+ #[cfg(test)]
+ thread_local! {
+@@ -109,7 +109,7 @@ pub(crate) fn set_theme_override(
+ ) -> Option<String> {
+     let warning = validate_theme_name(name.as_deref(), codex_home.as_deref());
+     let override_set_ok = THEME_OVERRIDE.set(name.clone()).is_ok();
+-    let codex_home_set_ok = CODEX_HOME.set(codex_home.clone()).is_ok();
++    let codex_home_set_ok = MESHAGENT_CODEX_HOME.set(codex_home.clone()).is_ok();
+     #[cfg(not(test))]
+     let initialized = THEME.get().is_some();
+     #[cfg(test)]
+@@ -135,7 +135,7 @@ pub(crate) fn validate_theme_name(name: Option<&str>, codex_home: Option<&Path>)
      let name = name?;
      let custom_theme_path_display = codex_home
          .map(|home| custom_theme_path(name, home).display().to_string())
 -        .unwrap_or_else(|| format!("$CODEX_HOME/themes/{name}.tmTheme"));
 +        .unwrap_or_else(|| format!("$MESHAGENT_CODEX_HOME/themes/{name}.tmTheme"));
-     // Bundled themes always resolve.
-     if parse_theme_name(name).is_some() {
+     if resolve_theme_by_name(name, codex_home).is_some() {
          return None;
+     }
+@@ -245,7 +245,7 @@ fn resolve_theme_with_override(name: Option<&str>, codex_home: Option<&Path>) ->
+ /// Extracted from the old `theme()` init closure so it can be reused.
+ fn build_default_theme() -> Theme {
+     let name = THEME_OVERRIDE.get().and_then(|name| name.as_deref());
+-    let codex_home = CODEX_HOME
++    let codex_home = MESHAGENT_CODEX_HOME
+         .get()
+         .and_then(|codex_home| codex_home.as_deref());
+     resolve_theme_with_override(name, codex_home)
+@@ -382,7 +382,7 @@ pub(crate) fn foreground_style_for_scopes_with_theme(
+ pub(crate) fn configured_theme_name() -> String {
+     // Explicit user override?
+     if let Some(Some(name)) = THEME_OVERRIDE.get() {
+-        let home = CODEX_HOME.get().and_then(|home| home.as_deref());
++        let home = MESHAGENT_CODEX_HOME.get().and_then(|home| home.as_deref());
+         if resolve_theme_by_name(name, home).is_some() {
+             return name.clone();
+         }
+@@ -410,7 +410,7 @@ pub(crate) fn resolve_theme_by_name(name: &str, codex_home: Option<&Path>) -> Op
+ }
+ 
+ /// A theme available in the picker, either bundled or loaded from a custom
+-/// `.tmTheme` file under `{CODEX_HOME}/themes/`.
++/// `.tmTheme` file under `{MESHAGENT_CODEX_HOME}/themes/`.
+ pub(crate) struct ThemeEntry {
+     /// Kebab-case identifier used for config persistence and theme resolution.
+     pub name: String,
 diff --git a/codex-rs/tui/src/startup_draft_tests.rs b/codex-rs/tui/src/startup_draft_tests.rs
-index 4e2689d..177a31a 100644
+index baaa0eb..693c693 100644
 --- a/codex-rs/tui/src/startup_draft_tests.rs
 +++ b/codex-rs/tui/src/startup_draft_tests.rs
-@@ -655,7 +655,10 @@ async fn startup_draft_waits_for_onboarding_before_accepting_input() {
+@@ -763,7 +763,10 @@ async fn startup_draft_waits_for_onboarding_before_accepting_input() {
                  codex_home.path(),
                  Ok(system_config_path),
                  || Ok(false),
@@ -1095,12 +1877,21 @@ index 726277c..0c7f731 100644
          assert!(!should_delay_startup_composer_for_first_login(
              &codex_home,
 diff --git a/codex-rs/tui/tests/suite/focus_palette.rs b/codex-rs/tui/tests/suite/focus_palette.rs
-index fccb840..cf8a7e1 100644
+index 5336163..307dea3 100644
 --- a/codex-rs/tui/tests/suite/focus_palette.rs
 +++ b/codex-rs/tui/tests/suite/focus_palette.rs
-@@ -97,7 +97,7 @@ impl PtyCodex {
-             .arg(repo_root)
-             .env("TERM", "xterm-256color")
+@@ -208,7 +208,7 @@ fn default_owned_screen_entry_paints_before_sync_ends_and_exit_clears_inline_dra
+     first_frame.process(&terminal.output[..end]);
+     let first_contents = first_frame.screen().contents();
+     ensure!(
+-        first_contents.contains("OpenAI Codex")
++        first_contents.contains("MeshAgent Codex")
+             && first_contents.contains("Ask Codex to do anything"),
+         "owned-screen synchronization ended before its first complete loading frame:\n{first_contents}"
+     );
+@@ -365,7 +365,7 @@ impl PtyCodex {
+             .env("TERM_PROGRAM", "kitty")
+             .env_remove("TERM_PROGRAM_VERSION")
              .env("OPENAI_API_KEY", "focus-palette-test")
 -            .env("CODEX_HOME", codex_home.path())
 +            .env("MESHAGENT_CODEX_HOME", codex_home.path())
@@ -1108,7 +1899,7 @@ index fccb840..cf8a7e1 100644
              .stdout(stdout)
              .stderr(slave)
 diff --git a/codex-rs/tui/tests/suite/resize_reflow.rs b/codex-rs/tui/tests/suite/resize_reflow.rs
-index 89928de..de9354a 100644
+index 2738c8a..b1cee6c 100644
 --- a/codex-rs/tui/tests/suite/resize_reflow.rs
 +++ b/codex-rs/tui/tests/suite/resize_reflow.rs
 @@ -55,7 +55,10 @@ async fn tmux_split_preserves_fresh_session_composer_row_after_resize_reflow() -
@@ -1123,7 +1914,7 @@ index 89928de..de9354a 100644
              .arg("OPENAI_API_KEY=dummy")
              .arg(codex)
              .arg("-c")
-@@ -222,7 +225,10 @@ async fn tmux_width_resize_restore_keeps_visible_content_anchored() -> Result<()
+@@ -219,7 +222,10 @@ async fn tmux_width_resize_restore_keeps_visible_content_anchored() -> Result<()
              .arg(&session_name)
              .arg("--")
              .arg("env")
@@ -1135,7 +1926,7 @@ index 89928de..de9354a 100644
              .arg("OPENAI_API_KEY=dummy")
              .arg(codex)
              .arg("-c")
-@@ -351,7 +357,10 @@ async fn tmux_scrolled_composer_resize_preserves_visible_draft_text() -> Result<
+@@ -345,7 +351,10 @@ async fn tmux_scrolled_composer_resize_preserves_visible_draft_text() -> Result<
              .arg(&session_name)
              .arg("--")
              .arg("env")
@@ -1147,7 +1938,7 @@ index 89928de..de9354a 100644
              .arg("OPENAI_API_KEY=dummy")
              .arg(codex)
              .arg("--model")
-@@ -479,7 +488,10 @@ async fn run_repeated_resize_smoke() -> Result<()> {
+@@ -470,7 +479,10 @@ async fn run_repeated_resize_smoke() -> Result<()> {
              .arg(&session_name)
              .arg("--")
              .arg("env")
@@ -1273,16 +2064,16 @@ index dfc7498..1d9e7dd 100644
          let mut expected = home_dir().expect("home dir");
          expected.push(".meshagent");
          expected.push("codex");
-diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
-index 1d9340c..069f934 100644
---- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
-+++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
-@@ -420,7 +420,7 @@ pub fn main() -> Result<()> {
-     let ret = real_main();
+diff --git a/codex-rs/windows-sandbox-rs/src/setup_provisioning.rs b/codex-rs/windows-sandbox-rs/src/setup_provisioning.rs
+index f60b1d9..d482de1 100644
+--- a/codex-rs/windows-sandbox-rs/src/setup_provisioning.rs
++++ b/codex-rs/windows-sandbox-rs/src/setup_provisioning.rs
+@@ -477,7 +477,7 @@ pub fn main() -> Result<()> {
+     let ret = real_main(&mut setup_mode);
      if let Err(e) = &ret {
          // Best-effort: log unexpected top-level errors.
 -        if let Ok(codex_home) = std::env::var("CODEX_HOME") {
 +        if let Ok(codex_home) = std::env::var("MESHAGENT_CODEX_HOME") {
              let sbx_dir = sandbox_dir(Path::new(&codex_home));
              let _ = std::fs::create_dir_all(&sbx_dir);
-             if let Some(mut f) = log_writer(&sbx_dir) {
+             // An unparsed payload must not enable writes to an existing log.

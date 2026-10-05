@@ -1,7 +1,7 @@
 schema_version = 1
 repository = "https://github.com/openai/codex.git"
-tag = "rust-v0.153.4"
-commit = "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a"
+tag = "rust-v0.160.0"
+commit = "a956835d020762cb2b570053af06f643a11c0ecc"
 source_subdirectory = "codex-rs"
-distribution_version = "0.153.4-meshagent.1"
-patchset = 9
+distribution_version = "0.160.0-meshagent.1"
+patchset = 10
