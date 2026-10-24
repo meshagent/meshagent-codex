@@ -123,7 +123,7 @@ def winget(
         + "Publisher: MeshAgent\n"
         + "PublisherUrl: https://www.meshagent.com\n"
         + "PackageName: Enterprise Codex\n"
-        + "PackageUrl: https://www.meshagent.com\n"
+        + "PackageUrl: https://docs.meshagent.com/interfaces/desktop_apps#enterprise-codex\n"
         + "License: Apache-2.0\n"
         + "ShortDescription: MeshAgent enterprise distribution of OpenAI Codex\n"
         + "Description: >-\n"
